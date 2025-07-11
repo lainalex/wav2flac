@@ -4,7 +4,6 @@ OPTIMIZED WAV to FLAC Converter with Direct FFmpeg and Smart Threading
 Leverages FFmpeg's native multithreading for maximum performance
 Recursively converts all WAV files in a directory and subdirectories to FLAC format
 Maintains the original folder structure in the output directory
-Includes prerequisite checking and detailed installation help
 Supports optional local caching for network locations and slow drives for improved performance
 """
 
@@ -18,187 +17,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from datetime import datetime
 
-def check_pip_available():
-    """Check if pip is available and working"""
-    pip_commands = [
-        [sys.executable, '-m', 'pip', '--version'],
-        ['pip3', '--version'],
-        ['pip', '--version']
-    ]
-    
-    for pip_cmd in pip_commands:
-        try:
-            result = subprocess.run(pip_cmd[:2] + ['--version'], 
-                                  capture_output=True, 
-                                  text=True, 
-                                  timeout=10)
-            if result.returncode == 0:
-                print(f"✓ Found working pip: {' '.join(pip_cmd[:2])}")
-                return pip_cmd[:2]
-        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-            continue
-    
-    return None
-
-def install_python_package(package_name, import_name=None):
-    """Install a Python package using pip"""
-    if import_name is None:
-        import_name = package_name
-    
-    print(f"\n📦 Installing {package_name}...")
-    
-    # Check if pip is available
-    pip_base_cmd = check_pip_available()
-    if not pip_base_cmd:
-        print("❌ No working pip installation found!")
-        print("Please install pip first: https://pip.pypa.io/en/stable/installation/")
-        return False
-    
-    # Try to install the package
-    install_cmd = pip_base_cmd + ['install', package_name]
-    
-    try:
-        print(f"Running: {' '.join(install_cmd)}")
-        result = subprocess.run(
-            install_cmd,
-            capture_output=True,
-            text=True,
-            timeout=120  # 2 minute timeout
-        )
-        
-        if result.returncode == 0:
-            print(f"✓ Successfully installed {package_name}")
-            
-            # Verify installation by trying to import
-            try:
-                __import__(import_name)
-                print(f"✓ {package_name} import verification: OK")
-                return True
-            except ImportError as e:
-                print(f"❌ {package_name} installed but import failed: {e}")
-                print("\n⚠️  This typically happens when:")
-                print("   • pip installed to a different Python than what's running this script")
-                print("   • Virtual environment activation issues")
-                print("   • Python PATH configuration problems")
-                print(f"\nDiagnostic info:")
-                print(f"   • Running Python: {sys.executable}")
-                print(f"   • Python version: {sys.version}")
-                
-                # Try to show where pip installed the package
-                try:
-                    pip_show = subprocess.run(
-                        pip_base_cmd + ['show', package_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                    if pip_show.returncode == 0:
-                        for line in pip_show.stdout.split('\n'):
-                            if line.startswith('Location:'):
-                                print(f"   • Package installed to: {line}")
-                                break
-                except:
-                    pass
-                
-                return False
-        else:
-            error_output = result.stderr.strip()
-            print(f"❌ Installation failed: {error_output}")
-            
-            # Check for common issues and provide specific help
-            if "permission denied" in error_output.lower():
-                print("💡 Try: pip install --user psutil")
-                print("   Or run with administrator/sudo privileges")
-            elif "externally-managed-environment" in error_output.lower():
-                print("💡 Your system uses externally managed Python packages.")
-                print("   Try using a virtual environment:")
-                print("   python -m venv myenv")
-                print("   source myenv/bin/activate  # On Windows: myenv\\Scripts\\activate")
-                print("   pip install psutil")
-            
-            return False
-            
-    except subprocess.TimeoutExpired:
-        print(f"❌ Installation timed out after 2 minutes")
-        return False
-    except Exception as e:
-        print(f"❌ Unexpected error during installation: {e}")
-        return False
-
-def auto_install_prerequisites():
-    """Automatically install missing Python packages"""
-    print("\n" + "="*60)
-    print("AUTOMATIC PREREQUISITE INSTALLATION")
-    print("="*60)
-    
-    # Ask for user permission
-    print("This script can automatically install missing Python packages.")
-    print("Required packages: psutil")
-    print("\nNote: This will use pip to install packages to your Python environment.")
-    print("If you're using a virtual environment, packages will be installed there.")
-    
-    while True:
-        choice = input("\nAutomatically install missing packages? (y/N): ").strip().lower()
-        if choice in ['y', 'yes']:
-            break
-        elif choice in ['n', 'no', '']:
-            print("Skipping automatic installation.")
-            print("💡 You can install manually using: pip install psutil")
-            return False
-        else:
-            print("Please enter 'y' for yes or 'n' for no.")
-    
-    print(f"\n🔍 Python environment info:")
-    print(f"Python executable: {sys.executable}")
-    print(f"Python version: {sys.version}")
-    
-    # Check if we're in a virtual environment
-    in_venv = hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix)
-    if in_venv:
-        print("✓ Running in virtual environment")
-    else:
-        print("ℹ️  Running in system Python (not a virtual environment)")
-    
-    installation_success = True
-    
-    # Check and install psutil
-    try:
-        import psutil
-        print("\n✓ psutil is already installed")
-    except ImportError:
-        print("\n📦 psutil not found, attempting installation...")
-        if not install_python_package('psutil'):
-            print("❌ Failed to install psutil automatically")
-            installation_success = False
-    
-    if installation_success:
-        print("\n✅ All Python packages are now installed!")
-        print("Continuing with prerequisite check...")
-        return True
-    else:
-        print("\n❌ Automatic installation failed.")
-        print("Please install psutil manually and run the script again.")
-        return False
-
 def check_prerequisites():
     """Check if all required software is installed"""
     print("Checking prerequisites...")
     issues = []
-    python_package_issues = []
     
     # Check Python version
     if sys.version_info < (3, 6):
         issues.append("Python 3.6 or higher is required")
     else:
         print("✓ Python version: OK")
-    
-    # Check psutil (for system info)
-    try:
-        import psutil
-        print("✓ psutil library: OK")
-    except ImportError:
-        python_package_issues.append("psutil")
-        print("✗ psutil library: NOT FOUND")
     
     # Check FFmpeg with detailed capability testing
     try:
@@ -233,37 +61,6 @@ def check_prerequisites():
     except Exception as e:
         issues.append(f"FFmpeg check failed: {str(e)}")
         print(f"✗ FFmpeg: ERROR - {str(e)}")
-    
-    # If we have Python package issues, try to auto-install
-    if python_package_issues:
-        print(f"\n⚠️  Found {len(python_package_issues)} missing Python package(s)")
-        
-        auto_install_result = auto_install_prerequisites()
-        
-        if auto_install_result:
-            # Re-check the packages after installation
-            print("\nRe-checking installed packages...")
-            remaining_issues = []
-            
-            # Re-check psutil
-            try:
-                import psutil
-                print("✓ psutil library: OK (newly installed)")
-            except ImportError:
-                remaining_issues.append("psutil library is installed but cannot be imported - this often indicates a Python path or environment issue")
-                print("✗ psutil library: INSTALLED BUT IMPORT FAILED")
-                print("\n💡 This usually happens when:")
-                print("   1. pip installed to a different Python than the one running this script")
-                print("   2. You need to restart your terminal/command prompt")
-                print("   3. Virtual environment activation issues")
-                print(f"\n   Current Python: {sys.executable}")
-                print(f"   Try running: {sys.executable} -m pip install psutil")
-            
-            # Add any remaining Python package issues to main issues list
-            issues.extend(remaining_issues)
-        else:
-            # Auto-installation failed or was declined
-            issues.extend([f"{pkg} library is not installed (pip install {pkg})" for pkg in python_package_issues])
     
     return issues
 
@@ -360,7 +157,7 @@ def convert_wav_to_flac_ffmpeg(wav_path, input_dir, output_dir, ffmpeg_threads, 
 
 def get_thread_count():
     """Prompt user for number of threads to use"""
-    max_cores = psutil.cpu_count()
+    max_cores = os.cpu_count() or 1  # Default to 1 if cpu_count returns None
     
     while True:
         try:
@@ -666,43 +463,16 @@ def main():
         for i, issue in enumerate(issues, 1):
             print(f"   {i}. {issue}")
         
-        # Check if it's specifically the import issue after installation
-        import_after_install_issue = any('installed but cannot be imported' in issue for issue in issues)
-        
-        if import_after_install_issue:
-            print(f"\n💡 Quick fix suggestions:")
-            print(f"   1. Close this terminal and open a new one")
-            print(f"   2. Run: {sys.executable} -m pip install psutil")
-            print(f"   3. Then run this script again")
-        else:
-            # Check if only FFmpeg is missing (Python packages were auto-installed)
-            ffmpeg_only = all('ffmpeg' in issue.lower() for issue in issues)
-            
-            if ffmpeg_only:
-                print(f"\n⚠️  Only FFmpeg needs manual installation.")
-                print("Python packages have been installed automatically.")
-                print("Please install FFmpeg and run the script again.")
-            else:
-                print(f"\n❌ Cannot proceed until all prerequisites are installed.")
-                print("Please install the missing components and try again.")
+        print(f"\n❌ Cannot proceed until all prerequisites are installed.")
+        print("Please install FFmpeg and run the script again.")
+        print("\nFFmpeg installation guides:")
+        print("• Windows: https://www.wikihow.com/Install-FFmpeg-on-Windows")
+        print("• macOS: brew install ffmpeg")
+        print("• Linux: sudo apt install ffmpeg (or equivalent for your distribution)")
         
         sys.exit(1)
     
     print("\n✅ All prerequisites are installed and working!")
-    
-    # Import psutil here after ensuring it's installed
-    try:
-        import psutil
-    except ImportError:
-        print("\n❌ Critical: psutil import failed even though prerequisites passed.")
-        print("This usually means pip installed to a different Python environment.")
-        print(f"\nCurrent Python interpreter: {sys.executable}")
-        print("\nTry one of these solutions:")
-        print(f"1. Install directly: {sys.executable} -m pip install psutil")
-        print("2. Restart your terminal/command prompt and try again")
-        print("3. If using a virtual environment, ensure it's properly activated")
-        sys.exit(1)
-    
     print("-" * 40)
     
     # Get input directory
@@ -740,7 +510,7 @@ def main():
     logger.info(f"Thread count: {thread_count}")
     logger.info(f"FLAC compression level: {compression_level}")
     logger.info(f"Output directory: {output_dir}")
-    logger.info(f"System: {os.name}, CPU cores: {psutil.cpu_count()}")
+    logger.info(f"System: {os.name}, CPU cores: {os.cpu_count()}")
     
     try:
         # Find WAV files
