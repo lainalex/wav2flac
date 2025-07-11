@@ -1,0 +1,82 @@
+2025-07-11 12:45:57,341 - INFO - ================================================================================
+2025-07-11 12:45:57,341 - INFO - OPTIMIZED WAV to FLAC Conversion Log Started
+2025-07-11 12:45:57,341 - INFO - ================================================================================
+2025-07-11 12:45:57,341 - INFO - Log file created: C:\Users\sysprep\Documents\GitHub\wav2flac\wav_files_converted\wav_to_flac_conversion_20250711_124557.log
+2025-07-11 12:45:57,341 - INFO - Prerequisites check completed successfully
+2025-07-11 12:45:57,341 - INFO - Input directory: C:\Users\sysprep\Documents\GitHub\wav2flac\wav_files
+2025-07-11 12:45:57,341 - INFO - Thread count: 8
+2025-07-11 12:45:57,341 - INFO - FLAC compression level: 12
+2025-07-11 12:45:57,341 - INFO - Output directory: C:\Users\sysprep\Documents\GitHub\wav2flac\wav_files_converted
+2025-07-11 12:45:57,341 - INFO - System: nt, CPU cores: 8
+2025-07-11 12:45:57,341 - INFO - Scanning for WAV files...
+2025-07-11 12:45:57,343 - INFO - Found 50 WAV file(s) to convert
+2025-07-11 12:46:01,502 - INFO - Starting optimized conversion process...
+2025-07-11 12:46:01,503 - INFO - Total input size: 534,775,900 bytes (510.0 MB)
+2025-07-11 12:46:01,503 - INFO - Thread pool created with 8 workers
+2025-07-11 12:46:01,508 - INFO - Submitted 50 conversion tasks
+2025-07-11 12:46:02,301 - INFO - ✓ audio_file_03.wav: Converted to audio_file_03.flac (-0.2% smaller, 0.80s)
+2025-07-11 12:46:02,316 - INFO - ✓ audio_file_05.wav: Converted to audio_file_05.flac (-0.2% smaller, 0.81s)
+2025-07-11 12:46:02,325 - INFO - ✓ audio_file_02.wav: Converted to audio_file_02.flac (-0.2% smaller, 0.82s)
+2025-07-11 12:46:02,352 - INFO - ✓ audio_file_08.wav: Converted to audio_file_08.flac (-0.2% smaller, 0.84s)
+2025-07-11 12:46:02,360 - INFO - ✓ audio_file_04.wav: Converted to audio_file_04.flac (-0.2% smaller, 0.85s)
+2025-07-11 12:46:02,375 - INFO - ✓ audio_file_06.wav: Converted to audio_file_06.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:02,389 - INFO - ✓ audio_file_07.wav: Converted to audio_file_07.flac (-0.2% smaller, 0.88s)
+2025-07-11 12:46:02,397 - INFO - ✓ audio_file_01.wav: Converted to audio_file_01.flac (-0.2% smaller, 0.89s)
+2025-07-11 12:46:03,103 - INFO - ✓ audio_file_16.wav: Converted to audio_file_16.flac (-0.2% smaller, 0.71s)
+2025-07-11 12:46:03,129 - INFO - ✓ audio_file_14.wav: Converted to audio_file_14.flac (-0.2% smaller, 0.73s)
+2025-07-11 12:46:03,152 - INFO - ✓ audio_file_13.wav: Converted to audio_file_13.flac (-0.2% smaller, 0.80s)
+2025-07-11 12:46:03,187 - INFO - ✓ audio_file_09.wav: Converted to audio_file_09.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:03,200 - INFO - ✓ audio_file_10.wav: Converted to audio_file_10.flac (-0.2% smaller, 0.90s)
+2025-07-11 12:46:03,215 - INFO - ✓ audio_file_12.wav: Converted to audio_file_12.flac (-0.2% smaller, 0.89s)
+2025-07-11 12:46:03,216 - INFO - ✓ audio_file_11.wav: Converted to audio_file_11.flac (-0.2% smaller, 0.86s)
+2025-07-11 12:46:03,292 - INFO - ✓ audio_file_15.wav: Converted to audio_file_15.flac (-0.2% smaller, 0.92s)
+2025-07-11 12:46:03,913 - INFO - ✓ audio_file_17.wav: Converted to audio_file_17.flac (-0.2% smaller, 0.81s)
+2025-07-11 12:46:03,931 - INFO - ✓ audio_file_20.wav: Converted to audio_file_20.flac (-0.2% smaller, 0.78s)
+2025-07-11 12:46:03,969 - INFO - ✓ audio_file_19.wav: Converted to audio_file_19.flac (-0.2% smaller, 0.84s)
+2025-07-11 12:46:03,995 - INFO - ✓ audio_file_18.wav: Converted to audio_file_18.flac (-0.2% smaller, 0.81s)
+2025-07-11 12:46:04,002 - INFO - ✓ audio_file_22.wav: Converted to audio_file_22.flac (-0.2% smaller, 0.79s)
+2025-07-11 12:46:04,025 - INFO - ✓ audio_file_24.wav: Converted to audio_file_24.flac (-0.2% smaller, 0.83s)
+2025-07-11 12:46:04,043 - INFO - ✓ audio_file_23.wav: Converted to audio_file_23.flac (-0.2% smaller, 0.83s)
+2025-07-11 12:46:04,094 - INFO - ✓ audio_file_21.wav: Converted to audio_file_21.flac (-0.2% smaller, 0.80s)
+2025-07-11 12:46:04,783 - INFO - ✓ audio_file_25.wav: Converted to audio_file_25.flac (-0.2% smaller, 0.85s)
+2025-07-11 12:46:04,799 - INFO - ✓ audio_file_27.wav: Converted to audio_file_27.flac (-0.2% smaller, 0.89s)
+2025-07-11 12:46:04,865 - INFO - ✓ audio_file_28.wav: Converted to audio_file_28.flac (-0.2% smaller, 0.86s)
+2025-07-11 12:46:04,872 - INFO - ✓ audio_file_26.wav: Converted to audio_file_26.flac (-0.2% smaller, 0.90s)
+2025-07-11 12:46:04,901 - INFO - ✓ audio_file_30.wav: Converted to audio_file_30.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:04,906 - INFO - ✓ audio_file_31.wav: Converted to audio_file_31.flac (-0.2% smaller, 0.91s)
+2025-07-11 12:46:04,962 - INFO - ✓ audio_file_29.wav: Converted to audio_file_29.flac (-0.2% smaller, 0.92s)
+2025-07-11 12:46:04,987 - INFO - ✓ audio_file_32.wav: Converted to audio_file_32.flac (-0.2% smaller, 0.89s)
+2025-07-11 12:46:05,675 - INFO - ✓ audio_file_35.wav: Converted to audio_file_35.flac (-0.2% smaller, 0.88s)
+2025-07-11 12:46:05,700 - INFO - ✓ audio_file_33.wav: Converted to audio_file_33.flac (-0.2% smaller, 0.92s)
+2025-07-11 12:46:05,769 - INFO - ✓ audio_file_36.wav: Converted to audio_file_36.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:05,809 - INFO - ✓ audio_file_37.wav: Converted to audio_file_37.flac (-0.2% smaller, 0.94s)
+2025-07-11 12:46:05,828 - INFO - ✓ audio_file_34.wav: Converted to audio_file_34.flac (-0.2% smaller, 0.96s)
+2025-07-11 12:46:05,863 - INFO - ✓ audio_file_38.wav: Converted to audio_file_38.flac (-0.2% smaller, 0.96s)
+2025-07-11 12:46:05,876 - INFO - ✓ audio_file_39.wav: Converted to audio_file_39.flac (-0.2% smaller, 0.91s)
+2025-07-11 12:46:05,908 - INFO - ✓ audio_file_40.wav: Converted to audio_file_40.flac (-0.2% smaller, 0.92s)
+2025-07-11 12:46:06,546 - INFO - ✓ audio_file_41.wav: Converted to audio_file_41.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:06,579 - INFO - ✓ audio_file_43.wav: Converted to audio_file_43.flac (-0.2% smaller, 0.88s)
+2025-07-11 12:46:06,648 - INFO - ✓ audio_file_42.wav: Converted to audio_file_42.flac (-0.2% smaller, 0.88s)
+2025-07-11 12:46:06,689 - INFO - ✓ audio_file_48.wav: Converted to audio_file_48.flac (-0.2% smaller, 0.78s)
+2025-07-11 12:46:06,698 - INFO - ✓ audio_file_46.wav: Converted to audio_file_46.flac (-0.2% smaller, 0.87s)
+2025-07-11 12:46:06,706 - INFO - ✓ audio_file_45.wav: Converted to audio_file_45.flac (-0.2% smaller, 0.84s)
+2025-07-11 12:46:06,706 - INFO - ✓ audio_file_44.wav: Converted to audio_file_44.flac (-0.2% smaller, 0.90s)
+2025-07-11 12:46:06,721 - INFO - ✓ audio_file_47.wav: Converted to audio_file_47.flac (-0.2% smaller, 0.84s)
+2025-07-11 12:46:07,218 - INFO - ✓ audio_file_49.wav: Converted to audio_file_49.flac (-0.2% smaller, 0.67s)
+2025-07-11 12:46:07,233 - INFO - ✓ audio_file_50.wav: Converted to audio_file_50.flac (-0.2% smaller, 0.65s)
+2025-07-11 12:46:07,235 - INFO - ==================================================
+2025-07-11 12:46:07,236 - INFO - CONVERSION SUMMARY
+2025-07-11 12:46:07,236 - INFO - ==================================================
+2025-07-11 12:46:07,236 - INFO - Total time: 5.73 seconds
+2025-07-11 12:46:07,236 - INFO - Files processed: 50
+2025-07-11 12:46:07,236 - INFO - Successful: 50
+2025-07-11 12:46:07,236 - INFO - Failed: 0
+2025-07-11 12:46:07,236 - INFO - Success rate: 100.0%
+2025-07-11 12:46:07,236 - INFO - Average time per file: 0.11 seconds
+2025-07-11 12:46:07,236 - INFO - Total input size: 534,775,900 bytes
+2025-07-11 12:46:07,236 - INFO - Total output size: 535,762,200 bytes
+2025-07-11 12:46:07,236 - INFO - Overall compression: -0.2%
+2025-07-11 12:46:07,236 - INFO - Throughput: 89.0 MB/s
+2025-07-11 12:46:07,236 - INFO - ================================================================================
+2025-07-11 12:46:07,236 - INFO - OPTIMIZED WAV to FLAC Conversion Log Completed
+2025-07-11 12:46:07,236 - INFO - ================================================================================
