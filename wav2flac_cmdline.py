@@ -13,7 +13,6 @@ import sys
 import logging
 import subprocess
 import shutil
-import psutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
@@ -761,14 +760,9 @@ def main():
                 print("❌ No files could be cached. Cannot proceed.")
                 return
             
-            if failed_copies:
-                print(f"⚠️  {len(failed_copies)} files failed to cache and will be skipped.")
-            
-            # Update to use cached files for conversion, but keep original input_dir for relative paths
+            # Update to use cached files for conversion
             wav_files = cached_wav_files
             input_dir = cache_dir  # This is where we'll read from
-            
-            print(f"✅ Caching completed. {len(cached_wav_files)} files ready for conversion.")
         
         # Start conversion
         print(f"\n🎵 Starting optimized conversion...")
