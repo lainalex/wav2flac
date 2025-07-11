@@ -76,7 +76,30 @@ def install_python_package(package_name, import_name=None):
                 return True
             except ImportError as e:
                 print(f"❌ {package_name} installed but import failed: {e}")
-                print("This might indicate a virtual environment issue.")
+                print("\n⚠️  This typically happens when:")
+                print("   • pip installed to a different Python than what's running this script")
+                print("   • Virtual environment activation issues")
+                print("   • Python PATH configuration problems")
+                print(f"\nDiagnostic info:")
+                print(f"   • Running Python: {sys.executable}")
+                print(f"   • Python version: {sys.version}")
+                
+                # Try to show where pip installed the package
+                try:
+                    pip_show = subprocess.run(
+                        pip_base_cmd + ['show', package_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if pip_show.returncode == 0:
+                        for line in pip_show.stdout.split('\n'):
+                            if line.startswith('Location:'):
+                                print(f"   • Package installed to: {line}")
+                                break
+                except:
+                    pass
+                
                 return False
         else:
             error_output = result.stderr.strip()
@@ -215,7 +238,9 @@ def check_prerequisites():
     if python_package_issues:
         print(f"\n⚠️  Found {len(python_package_issues)} missing Python package(s)")
         
-        if auto_install_prerequisites():
+        auto_install_result = auto_install_prerequisites()
+        
+        if auto_install_result:
             # Re-check the packages after installation
             print("\nRe-checking installed packages...")
             remaining_issues = []
@@ -225,8 +250,14 @@ def check_prerequisites():
                 import psutil
                 print("✓ psutil library: OK (newly installed)")
             except ImportError:
-                remaining_issues.append("psutil library is still not available after installation")
-                print("✗ psutil library: STILL NOT FOUND")
+                remaining_issues.append("psutil library is installed but cannot be imported - this often indicates a Python path or environment issue")
+                print("✗ psutil library: INSTALLED BUT IMPORT FAILED")
+                print("\n💡 This usually happens when:")
+                print("   1. pip installed to a different Python than the one running this script")
+                print("   2. You need to restart your terminal/command prompt")
+                print("   3. Virtual environment activation issues")
+                print(f"\n   Current Python: {sys.executable}")
+                print(f"   Try running: {sys.executable} -m pip install psutil")
             
             # Add any remaining Python package issues to main issues list
             issues.extend(remaining_issues)
@@ -635,16 +666,25 @@ def main():
         for i, issue in enumerate(issues, 1):
             print(f"   {i}. {issue}")
         
-        # Check if only FFmpeg is missing (Python packages were auto-installed)
-        ffmpeg_only = all('ffmpeg' in issue.lower() for issue in issues)
+        # Check if it's specifically the import issue after installation
+        import_after_install_issue = any('installed but cannot be imported' in issue for issue in issues)
         
-        if ffmpeg_only:
-            print(f"\n⚠️  Only FFmpeg needs manual installation.")
-            print("Python packages have been installed automatically.")
-            print("Please install FFmpeg and run the script again.")
+        if import_after_install_issue:
+            print(f"\n💡 Quick fix suggestions:")
+            print(f"   1. Close this terminal and open a new one")
+            print(f"   2. Run: {sys.executable} -m pip install psutil")
+            print(f"   3. Then run this script again")
         else:
-            print(f"\n❌ Cannot proceed until all prerequisites are installed.")
-            print("Please install the missing components and try again.")
+            # Check if only FFmpeg is missing (Python packages were auto-installed)
+            ffmpeg_only = all('ffmpeg' in issue.lower() for issue in issues)
+            
+            if ffmpeg_only:
+                print(f"\n⚠️  Only FFmpeg needs manual installation.")
+                print("Python packages have been installed automatically.")
+                print("Please install FFmpeg and run the script again.")
+            else:
+                print(f"\n❌ Cannot proceed until all prerequisites are installed.")
+                print("Please install the missing components and try again.")
         
         sys.exit(1)
     
@@ -654,7 +694,13 @@ def main():
     try:
         import psutil
     except ImportError:
-        print("❌ psutil import failed. Please restart the script.")
+        print("\n❌ Critical: psutil import failed even though prerequisites passed.")
+        print("This usually means pip installed to a different Python environment.")
+        print(f"\nCurrent Python interpreter: {sys.executable}")
+        print("\nTry one of these solutions:")
+        print(f"1. Install directly: {sys.executable} -m pip install psutil")
+        print("2. Restart your terminal/command prompt and try again")
+        print("3. If using a virtual environment, ensure it's properly activated")
         sys.exit(1)
     
     print("-" * 40)
