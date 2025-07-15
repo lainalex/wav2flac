@@ -512,8 +512,19 @@ class WAVtoFLACConverter:
     def check_ffmpeg_in_path(self):
         """Check if FFmpeg is available in system PATH"""
         try:
+            # Hide console window on Windows
+            startupinfo = None
+            creation_flags = 0
+            
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creation_flags = subprocess.CREATE_NO_WINDOW
+            
             result = subprocess.run(['ffmpeg', '-version'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10,
+                                  startupinfo=startupinfo, creationflags=creation_flags)
             if result.returncode == 0:
                 version_line = result.stdout.split('\n')[0]
                 self.log_message(f"✓ FFmpeg found in PATH: {version_line.split()[2]}")
@@ -532,8 +543,19 @@ class WAVtoFLACConverter:
         local_ffmpeg = self.ffmpeg_dir / "bin" / "ffmpeg.exe"
         if local_ffmpeg.exists():
             try:
+                # Hide console window on Windows
+                startupinfo = None
+                creation_flags = 0
+                
+                if sys.platform == "win32":
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    creation_flags = subprocess.CREATE_NO_WINDOW
+                
                 result = subprocess.run([str(local_ffmpeg), '-version'], 
-                                      capture_output=True, text=True, timeout=10)
+                                      capture_output=True, text=True, timeout=10,
+                                      startupinfo=startupinfo, creationflags=creation_flags)
                 if result.returncode == 0:
                     version_line = result.stdout.split('\n')[0]
                     self.log_message(f"✓ Local FFmpeg found: {version_line.split()[2]}")
@@ -549,8 +571,19 @@ class WAVtoFLACConverter:
     def check_flac_support(self, ffmpeg_path):
         """Check if FFmpeg supports FLAC encoding"""
         try:
+            # Hide console window on Windows
+            startupinfo = None
+            creation_flags = 0
+            
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creation_flags = subprocess.CREATE_NO_WINDOW
+            
             flac_test = subprocess.run([ffmpeg_path, '-encoders'], 
-                                     capture_output=True, text=True, timeout=10)
+                                     capture_output=True, text=True, timeout=10,
+                                     startupinfo=startupinfo, creationflags=creation_flags)
             if 'flac' in flac_test.stdout.lower():
                 self.log_message("✓ FLAC encoding supported")
                 return True
@@ -741,11 +774,23 @@ class WAVtoFLACConverter:
             ]
             
             # Run FFmpeg conversion (with same timeout as original)
+            # Hide console window on Windows
+            startupinfo = None
+            creation_flags = 0
+            
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creation_flags = subprocess.CREATE_NO_WINDOW
+            
             result = subprocess.run(
                 ffmpeg_cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout per file
+                timeout=300,  # 5 minute timeout per file
+                startupinfo=startupinfo,
+                creationflags=creation_flags
             )
             
             duration = time.time() - start_time
@@ -1279,12 +1324,24 @@ class WAVtoFLACConverter:
             return False
             
         try:
+            # Hide console window on Windows
+            startupinfo = None
+            creation_flags = 0
+            
+            if sys.platform == "win32":
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                creation_flags = subprocess.CREATE_NO_WINDOW
+            
             result = subprocess.run([str(ffmpeg_exe), '-version'], 
-                                  capture_output=True, text=True, timeout=10)
+                                  capture_output=True, text=True, timeout=10,
+                                  startupinfo=startupinfo, creationflags=creation_flags)
             if result.returncode == 0:
                 # Check for FLAC support
                 flac_test = subprocess.run([str(ffmpeg_exe), '-encoders'], 
-                                         capture_output=True, text=True, timeout=10)
+                                         capture_output=True, text=True, timeout=10,
+                                         startupinfo=startupinfo, creationflags=creation_flags)
                 return 'flac' in flac_test.stdout.lower()
         except Exception:
             pass
