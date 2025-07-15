@@ -35,7 +35,7 @@ except ImportError:
     HAS_PACKAGING = False
     
 # Application version and update checking
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 # Update checking configuration for GitHub repository: lainalex/wav2flac
 UPDATE_CHECK_URL = "https://api.github.com/repos/lainalex/wav2flac/releases/latest"
@@ -46,7 +46,7 @@ UPDATE_CHECK_URL = "https://api.github.com/repos/lainalex/wav2flac/releases/late
 class WAVtoFLACConverter:
     def __init__(self, root):
         self.root = root
-        self.root.title(f"WAV to FLAC Converter v{APP_VERSION}")
+        self.root.title(f"WAV2FLAC v{APP_VERSION}")
         self.root.geometry("700x700")
         self.root.minsize(600, 600)
         
@@ -291,7 +291,7 @@ class WAVtoFLACConverter:
         ttk.Label(main_frame, text=latest_text, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 10))
         
         # Description
-        description = ("A new version of WAV to FLAC Converter is available.\n\n"
+        description = ("A new version of WAV2FLAC is available.\n\n"
                       "To update, please download the latest version from the\n"
                       "GitHub release page and replace your current installation.\n\n"
                       "New features and bug fixes may be included in this update.")
