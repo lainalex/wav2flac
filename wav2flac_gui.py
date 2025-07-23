@@ -33,9 +33,9 @@ try:
     HAS_PACKAGING = True
 except ImportError:
     HAS_PACKAGING = False
-    
+
 # Application version and update checking
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 # Update checking configuration for GitHub repository: lainalex/wav2flac
 UPDATE_CHECK_URL = "https://api.github.com/repos/lainalex/wav2flac/releases/latest"
@@ -131,7 +131,7 @@ class WAVtoFLACConverter:
             iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAABHNCSVQICAgIfAhkiAAAAAlwSFlz
             AAAB2AAAAdgB+lymcgAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAE5SURB
             VDiNpZM9SwNBEIafgGBhI2qbVjYWFhY2traxsLGwsLCwsLGwsLGwsLCwsLGwsLCwsLGwsLCwsLGw
-            sLCwsLGwsLCwsLGwsLCwsLGwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGw
+            sLCwsLGwsLCwsLGwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGw
             sLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCw
             sLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGwsLCwsLGw
             """
@@ -164,178 +164,6 @@ class WAVtoFLACConverter:
         except Exception:
             pass  # Give up on icon if all methods fail
             
-    def compare_versions(self, current, latest):
-        """Compare version strings (with fallback if packaging not available)"""
-        if HAS_PACKAGING:
-            try:
-                return version.parse(latest) > version.parse(current)
-            except Exception:
-                pass
-        
-        # Simple fallback version comparison
-        try:
-            current_parts = [int(x) for x in current.split('.')]
-            latest_parts = [int(x) for x in latest.split('.')]
-            
-            # Pad shorter version with zeros
-            max_len = max(len(current_parts), len(latest_parts))
-            current_parts.extend([0] * (max_len - len(current_parts)))
-            latest_parts.extend([0] * (max_len - len(latest_parts)))
-            
-            return latest_parts > current_parts
-        except Exception:
-            return False
-            
-    def start_update_check(self):
-        """Start checking for updates in background"""
-        if UPDATE_CHECK_URL is None:
-            # Update checking disabled
-            self.update_status_var.set("")
-            return
-            
-        if not self.is_checking_updates:
-            self.is_checking_updates = True
-            self.update_check_thread = threading.Thread(target=self.check_for_updates_worker, daemon=True)
-            self.update_check_thread.start()
-            
-    def check_for_updates_worker(self):
-        """Background worker to check for application updates"""
-        try:
-            # Create SSL context for HTTPS requests
-            ssl_context = ssl.create_default_context()
-            
-            # Create request with user agent
-            request = urllib.request.Request(
-                UPDATE_CHECK_URL,
-                headers={'User-Agent': f'wav2flac/{APP_VERSION}'}
-            )
-            
-            # Make request with timeout
-            with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
-                if response.status == 200:
-                    data = json.loads(response.read().decode('utf-8'))
-                    
-                    # Extract version from tag_name (assuming format like "v1.0.0" or "1.0.0")
-                    tag_name = data.get('tag_name', '')
-                    latest_version = tag_name.lstrip('v')  # Remove 'v' prefix if present
-                    
-                    if latest_version and self.compare_versions(APP_VERSION, latest_version):
-                        self.latest_version = latest_version
-                        self.update_available = True
-                        
-                        # Update UI on main thread
-                        update_text = f"Update available: v{latest_version} (click to view)"
-                        self.root.after(0, lambda: self.update_status_var.set(update_text))
-                        self.root.after(0, lambda: self.update_status_label.config(foreground='blue', cursor='hand2'))
-                        
-                        self.log_message(f"Update available: v{latest_version}")
-                    else:
-                        # Up to date
-                        self.root.after(0, lambda: self.update_status_var.set("Application is up to date"))
-                        self.root.after(0, lambda: self.update_status_label.config(foreground='green'))
-                        
-                        # Hide status after a few seconds
-                        self.root.after(3000, lambda: self.update_status_var.set(""))
-                else:
-                    raise Exception(f"HTTP {response.status}")
-                    
-        except Exception as e:
-            # Update check failed - don't show error to user, just log it
-            error_msg = f"Update check failed: {e}"
-            self.log_message(error_msg)
-            
-            # Show discrete message that disappears quickly
-            self.root.after(0, lambda: self.update_status_var.set("Unable to check for updates"))
-            self.root.after(0, lambda: self.update_status_label.config(foreground='gray'))
-            self.root.after(2000, lambda: self.update_status_var.set(""))
-            
-        finally:
-            self.is_checking_updates = False
-            
-    def on_update_status_click(self, event):
-        """Handle click on update status (when update is available)"""
-        if self.update_available and self.latest_version:
-            self.show_update_dialog()
-            
-    def show_update_dialog(self):
-        """Show dialog with update information"""
-        if not self.latest_version:
-            return
-            
-        # Create update dialog
-        update_dialog = tk.Toplevel(self.root)
-        update_dialog.title("Update Available")
-        update_dialog.geometry("400x300")
-        update_dialog.resizable(False, False)
-        update_dialog.grab_set()  # Make dialog modal
-        
-        # Center the dialog
-        update_dialog.transient(self.root)
-        update_dialog.geometry("+%d+%d" % (
-            self.root.winfo_rootx() + 150,
-            self.root.winfo_rooty() + 100
-        ))
-        
-        # Dialog content
-        main_frame = ttk.Frame(update_dialog, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Title
-        ttk.Label(main_frame, text="Update Available", font=('Arial', 14, 'bold')).pack(pady=(0, 10))
-        
-        # Version info
-        current_text = f"Current Version: v{APP_VERSION}"
-        latest_text = f"Latest Version: v{self.latest_version}"
-        
-        ttk.Label(main_frame, text=current_text).pack(anchor='w')
-        ttk.Label(main_frame, text=latest_text, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 10))
-        
-        # Description
-        description = ("A new version of WAV2FLAC is available.\n\n"
-                      "To update, please download the latest version from the\n"
-                      "GitHub release page and replace your current installation.\n\n"
-                      "New features and bug fixes may be included in this update.")
-        
-        ttk.Label(main_frame, text=description, wraplength=350, justify=tk.LEFT).pack(pady=(0, 20))
-        
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-        
-        ttk.Button(button_frame, text="View Release", 
-                  command=lambda: self.open_release_page(update_dialog)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(button_frame, text="Remind Later", 
-                  command=lambda: self.remind_later(update_dialog)).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(button_frame, text="Skip Version", 
-                  command=lambda: self.skip_version(update_dialog)).pack(side=tk.LEFT)
-                  
-    def open_release_page(self, dialog):
-        """Open the release page in default browser"""
-        try:
-            # Construct GitHub release URL
-            release_url = f"https://github.com/lainalex/wav2flac/releases/tag/v{self.latest_version}"
-            
-            # Open in default browser
-            webbrowser.open(release_url)
-            
-            dialog.destroy()
-        except Exception as e:
-            messagebox.showerror("Error", f"Could not open release page: {e}")
-            
-    def remind_later(self, dialog):
-        """Close dialog and remind later"""
-        dialog.destroy()
-        # Could implement persistence to remind on next startup
-        
-    def skip_version(self, dialog):
-        """Skip this version update"""
-        self.update_available = False
-        self.update_status_var.set("")
-        dialog.destroy()
-        # Could implement persistence to not show this version again
-        
     def create_widgets(self):
         # Main frame with padding
         main_frame = ttk.Frame(self.root, padding="10")
@@ -469,9 +297,10 @@ class WAVtoFLACConverter:
         """Browse for input directory"""
         directory = filedialog.askdirectory(title="Select Input Directory with WAV files")
         if directory:
-            self.input_dir.set(directory)
-            # Auto-set output directory with '_converted' suffix (like original script)
+            # Convert to Path object and back to string for consistent separator handling
             input_path = Path(directory)
+            self.input_dir.set(str(input_path))
+            # Auto-set output directory with '_converted' suffix (like original script)
             output_path = input_path.parent / (input_path.name + "_converted")
             self.output_dir.set(str(output_path))
             
@@ -483,6 +312,8 @@ class WAVtoFLACConverter:
                 if input_path.exists() and input_path.is_dir():
                     output_path = input_path.parent / (input_path.name + "_converted")
                     self.output_dir.set(str(output_path))
+                    # Also update the input field to use consistent separator
+                    self.input_dir.set(str(input_path))
             except Exception:
                 pass  # Ignore invalid paths during typing
                 
@@ -490,7 +321,9 @@ class WAVtoFLACConverter:
         """Browse for cache directory"""
         directory = filedialog.askdirectory(title="Select Cache Directory")
         if directory:
-            self.cache_dir.set(directory)
+            # Convert to Path object and back to string for consistent separator handling
+            cache_path = Path(directory)
+            self.cache_dir.set(str(cache_path))
 
     def get_subprocess_config(self):
         """Get subprocess configuration to hide console windows on all platforms"""
@@ -716,6 +549,19 @@ class WAVtoFLACConverter:
         if self.use_cache.get() and not self.cache_dir.get():
             messagebox.showerror("Error", "Please select a cache directory when caching is enabled")
             return False
+        
+        # Validate cache directory if caching is enabled
+        if self.use_cache.get():
+            cache_path = Path(self.cache_dir.get())
+            try:
+                # Try to create cache directory if it doesn't exist
+                cache_path.mkdir(parents=True, exist_ok=True)
+                if not cache_path.is_dir():
+                    messagebox.showerror("Error", "Cache directory path is not valid")
+                    return False
+            except Exception as e:
+                messagebox.showerror("Error", f"Cannot create cache directory: {e}")
+                return False
             
         # Check if FFmpeg is available
         if not (self.check_ffmpeg_in_path() or self.check_local_ffmpeg()):
@@ -827,7 +673,7 @@ class WAVtoFLACConverter:
         
         if self.logger:
             self.logger.info(f"Starting cache operation for {len(wav_files)} files")
-            self.logger.info(f"Cache directory: {cache_dir}")
+            self.logger.info(f"Cache directory: {str(cache_dir)}")
         
         cached_files = []
         failed_copies = []
@@ -898,15 +744,16 @@ class WAVtoFLACConverter:
     def cleanup_cache(self, cache_dir):
         """Clean up the cache directory (with logging like original script)"""
         try:
-            if Path(cache_dir).exists():
+            cache_path = Path(cache_dir)
+            if cache_path.exists():
                 self.log_message("Cleaning up cache directory...")
                 if self.logger:
                     self.logger.info("Starting cache cleanup")
                 
                 # Count files before deletion for logging (like original)
-                file_count = sum(1 for _ in Path(cache_dir).rglob('*') if _.is_file())
+                file_count = sum(1 for _ in cache_path.rglob('*') if _.is_file())
                 
-                shutil.rmtree(cache_dir)
+                shutil.rmtree(str(cache_path))
                 
                 cleanup_msg = f"Cache cleanup completed. Removed {file_count} cached files."
                 self.log_message(f"✓ {cleanup_msg}")
@@ -933,13 +780,10 @@ class WAVtoFLACConverter:
             
             # Create output directory (like original script)
             output_dir.mkdir(parents=True, exist_ok=True)
-            self.log_message(f"Created output directory: {output_dir}")
+            self.log_message(f"Created output directory: {str(output_dir)}")
             
             # Set up file logging
             self.setup_file_logging(output_dir)
-            
-            # Enable log file button
-            self.root.after(0, lambda: self.open_log_btn.config(state='normal'))
             
             # Find WAV files
             wav_files = self.find_wav_files(input_dir)
@@ -1045,7 +889,7 @@ class WAVtoFLACConverter:
         total_size_mb = sum(f.stat().st_size for f in wav_files) / (1024 * 1024)
         
         message = (f"Found {len(wav_files)} WAV files ({total_size_mb:.1f} MB)\n\n"
-                  f"Output: {self.output_dir.get()}\n\n"
+                  f"Output: {str(Path(self.output_dir.get()))}\n\n"
                   f"Settings:\n"
                   f"• CPU Cores: {self.thread_count.get()}\n"
                   f"• Compression Level: {self.compression_level.get()}\n"
@@ -1107,7 +951,7 @@ class WAVtoFLACConverter:
         description = ("FFmpeg is required for audio conversion.\n\n"
                       "This will download and install FFmpeg locally for this application.\n"
                       "The installation is about 100MB and will be saved to:\n"
-                      f"{self.ffmpeg_dir}\n\n"
+                      f"{str(self.ffmpeg_dir)}\n\n"
                       "No administrator privileges required.\n"
                       "Note: If SSL certificate issues occur, the installer will use\n"
                       "secure fallback methods to complete the download.")
@@ -1371,35 +1215,177 @@ class WAVtoFLACConverter:
             self.install_btn.config(state='normal', text='Install Complete')
             self.cancel_install_btn.config(text='Close')
             
-    def open_log_file(self):
-        """Open the log file in the default text editor"""
-        if self.log_file_path and self.log_file_path.exists():
+    def compare_versions(self, current, latest):
+        """Compare version strings (with fallback if packaging not available)"""
+        if HAS_PACKAGING:
             try:
-                os.startfile(str(self.log_file_path))
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not open log file: {e}")
-        else:
-            messagebox.showwarning("Log File Not Found", 
-                                 "Log file not available. Start a conversion to create a log file.")
-            
-    def open_output_folder(self):
-        """Open the output folder in Windows Explorer"""
-        output_path = Path(self.output_dir.get()) if self.output_dir.get() else None
+                return version.parse(latest) > version.parse(current)
+            except Exception:
+                pass
         
-        if output_path and output_path.exists():
-            os.startfile(str(output_path))
-        elif self.input_dir.get():
-            # If output doesn't exist yet but input is selected, show where it will be created
-            input_path = Path(self.input_dir.get())
-            auto_output = input_path.parent / (input_path.name + "_converted")
-            if auto_output.exists():
-                os.startfile(str(auto_output))
-            else:
-                messagebox.showinfo("Output Folder", 
-                                  f"Output folder will be created at:\n{auto_output}\n\n"
-                                  f"(Run conversion first to create the folder)")
-        else:
-            messagebox.showwarning("No Directory Selected", "Please select an input directory first")
+        # Simple fallback version comparison
+        try:
+            current_parts = [int(x) for x in current.split('.')]
+            latest_parts = [int(x) for x in latest.split('.')]
+            
+            # Pad shorter version with zeros
+            max_len = max(len(current_parts), len(latest_parts))
+            current_parts.extend([0] * (max_len - len(current_parts)))
+            latest_parts.extend([0] * (max_len - len(latest_parts)))
+            
+            return latest_parts > current_parts
+        except Exception:
+            return False
+            
+    def start_update_check(self):
+        """Start checking for updates in background"""
+        if UPDATE_CHECK_URL is None:
+            # Update checking disabled
+            self.update_status_var.set("")
+            return
+            
+        if not self.is_checking_updates:
+            self.is_checking_updates = True
+            self.update_check_thread = threading.Thread(target=self.check_for_updates_worker, daemon=True)
+            self.update_check_thread.start()
+            
+    def check_for_updates_worker(self):
+        """Background worker to check for application updates"""
+        try:
+            # Create SSL context for HTTPS requests
+            ssl_context = ssl.create_default_context()
+            
+            # Create request with user agent
+            request = urllib.request.Request(
+                UPDATE_CHECK_URL,
+                headers={'User-Agent': f'wav2flac/{APP_VERSION}'}
+            )
+            
+            # Make request with timeout
+            with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    
+                    # Extract version from tag_name (assuming format like "v1.0.0" or "1.0.0")
+                    tag_name = data.get('tag_name', '')
+                    latest_version = tag_name.lstrip('v')  # Remove 'v' prefix if present
+                    
+                    if latest_version and self.compare_versions(APP_VERSION, latest_version):
+                        self.latest_version = latest_version
+                        self.update_available = True
+                        
+                        # Update UI on main thread
+                        update_text = f"Update available: v{latest_version} (click to view)"
+                        self.root.after(0, lambda: self.update_status_var.set(update_text))
+                        self.root.after(0, lambda: self.update_status_label.config(foreground='blue', cursor='hand2'))
+                        
+                        self.log_message(f"Update available: v{latest_version}")
+                    else:
+                        # Up to date
+                        self.root.after(0, lambda: self.update_status_var.set("Application is up to date"))
+                        self.root.after(0, lambda: self.update_status_label.config(foreground='green'))
+                        
+                        # Hide status after a few seconds
+                        self.root.after(3000, lambda: self.update_status_var.set(""))
+                else:
+                    raise Exception(f"HTTP {response.status}")
+                    
+        except Exception as e:
+            # Update check failed - don't show error to user, just log it
+            error_msg = f"Update check failed: {e}"
+            self.log_message(error_msg)
+            
+            # Show discrete message that disappears quickly
+            self.root.after(0, lambda: self.update_status_var.set("Unable to check for updates"))
+            self.root.after(0, lambda: self.update_status_label.config(foreground='gray'))
+            self.root.after(2000, lambda: self.update_status_var.set(""))
+            
+        finally:
+            self.is_checking_updates = False
+            
+    def on_update_status_click(self, event):
+        """Handle click on update status (when update is available)"""
+        if self.update_available and self.latest_version:
+            self.show_update_dialog()
+            
+    def show_update_dialog(self):
+        """Show dialog with update information"""
+        if not self.latest_version:
+            return
+            
+        # Create update dialog
+        update_dialog = tk.Toplevel(self.root)
+        update_dialog.title("Update Available")
+        update_dialog.geometry("400x300")
+        update_dialog.resizable(False, False)
+        update_dialog.grab_set()  # Make dialog modal
+        
+        # Center the dialog
+        update_dialog.transient(self.root)
+        update_dialog.geometry("+%d+%d" % (
+            self.root.winfo_rootx() + 150,
+            self.root.winfo_rooty() + 100
+        ))
+        
+        # Dialog content
+        main_frame = ttk.Frame(update_dialog, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Title
+        ttk.Label(main_frame, text="Update Available", font=('Arial', 14, 'bold')).pack(pady=(0, 10))
+        
+        # Version info
+        current_text = f"Current Version: v{APP_VERSION}"
+        latest_text = f"Latest Version: v{self.latest_version}"
+        
+        ttk.Label(main_frame, text=current_text).pack(anchor='w')
+        ttk.Label(main_frame, text=latest_text, font=('Arial', 9, 'bold')).pack(anchor='w', pady=(0, 10))
+        
+        # Description
+        description = ("A new version of WAV2FLAC is available.\n\n"
+                      "To update, please download the latest version from the\n"
+                      "GitHub release page and replace your current installation.\n\n"
+                      "New features and bug fixes may be included in this update.")
+        
+        ttk.Label(main_frame, text=description, wraplength=350, justify=tk.LEFT).pack(pady=(0, 20))
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X)
+        
+        ttk.Button(button_frame, text="View Release", 
+                  command=lambda: self.open_release_page(update_dialog)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(button_frame, text="Remind Later", 
+                  command=lambda: self.remind_later(update_dialog)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(button_frame, text="Skip Version", 
+                  command=lambda: self.skip_version(update_dialog)).pack(side=tk.LEFT)
+                  
+    def open_release_page(self, dialog):
+        """Open the release page in default browser"""
+        try:
+            # Construct GitHub release URL
+            release_url = f"https://github.com/lainalex/wav2flac/releases/tag/v{self.latest_version}"
+            
+            # Open in default browser
+            webbrowser.open(release_url)
+            
+            dialog.destroy()
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open release page: {e}")
+            
+    def remind_later(self, dialog):
+        """Close dialog and remind later"""
+        dialog.destroy()
+        # Could implement persistence to remind on next startup
+        
+    def skip_version(self, dialog):
+        """Skip this version update"""
+        self.update_available = False
+        self.update_status_var.set("")
+        dialog.destroy()
+        # Could implement persistence to not show this version again
 
 def main():
     # Set up high DPI awareness for Windows
