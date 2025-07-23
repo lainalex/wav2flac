@@ -962,39 +962,34 @@ class WAVtoFLACConverter:
         # Create installation dialog
         install_dialog = tk.Toplevel(self.root)
         install_dialog.title("Install FFmpeg")
-        install_dialog.geometry("480x350")
+        install_dialog.geometry("520x240")
         install_dialog.resizable(False, False)
         install_dialog.grab_set()  # Make dialog modal
         
         # Center the dialog
         install_dialog.transient(self.root)
         install_dialog.geometry("+%d+%d" % (
-            self.root.winfo_rootx() + 50,
+            self.root.winfo_rootx() + 100,
             self.root.winfo_rooty() + 50
         ))
         
         # Dialog content
-        main_frame = ttk.Frame(install_dialog, padding="20")
+        main_frame = ttk.Frame(install_dialog, padding="15")
         main_frame.pack(fill=tk.BOTH, expand=True)
         
         # Title and description
-        ttk.Label(main_frame, text="Install FFmpeg", font=('Arial', 14, 'bold')).pack(pady=(0, 10))
+        ttk.Label(main_frame, text="Install FFmpeg", font=('Arial', 14, 'bold')).pack(pady=(0, 8))
         
-        description = ("FFmpeg is a required component for audio conversion.\n\n"
-                      "This will download the official FFmpeg binary from:\n"
-                      "https://github.com/BtbN/FFmpeg-Builds\n\n"
-                      "Installation details:\n"
-                      f"• Download size: ~100MB\n"
-                      f"• Install location: {str(self.ffmpeg_dir)}\n"
-                      f"• No administrator privileges required\n"
-                      f"• Safe, legitimate audio processing software\n\n"
-                      "FFmpeg is widely used open-source software for audio/video processing.")
+        description = ("FFmpeg is required for audio conversion.\n\n"
+                      "Download source: https://github.com/BtbN/FFmpeg-Builds\n"
+                      f"Install location: {str(self.ffmpeg_dir)}\n"
+                      "Download size: ~100MB | No admin privileges required")
         
-        ttk.Label(main_frame, text=description, wraplength=420, justify=tk.LEFT).pack(pady=(0, 20))
+        ttk.Label(main_frame, text=description, wraplength=480, justify=tk.LEFT).pack(pady=(0, 10))
         
         # Progress frame
         progress_frame = ttk.Frame(main_frame)
-        progress_frame.pack(fill=tk.X, pady=(0, 20))
+        progress_frame.pack(fill=tk.X, pady=(0, 15))
         
         self.install_progress_var = tk.StringVar(value="Ready to download...")
         ttk.Label(progress_frame, textvariable=self.install_progress_var).pack()
@@ -1002,7 +997,7 @@ class WAVtoFLACConverter:
         self.install_progress_bar = ttk.Progressbar(progress_frame, mode='determinate')
         self.install_progress_bar.pack(fill=tk.X, pady=(5, 0))
         
-        # Buttons
+        # Buttons frame - pack normally instead of using side=tk.BOTTOM
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(fill=tk.X)
         
