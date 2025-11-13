@@ -47,10 +47,14 @@ except ImportError:
     HAS_PACKAGING = False
 
 # Application version and update checking
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.3"
 
 # Update checking configuration for GitHub repository: lainalex/wav2flac
 UPDATE_CHECK_URL = "https://api.github.com/repos/lainalex/wav2flac/releases/latest"
+
+# Configuration constants
+CACHE_COPY_THREADS = 8  # Maximum threads for I/O-bound cache copying
+DISK_SPACE_SAFETY_MARGIN = 1.2  # 20% extra space required for caching
 
 # To disable update checking completely, uncomment the line below:
 # UPDATE_CHECK_URL = None
@@ -472,7 +476,43 @@ class WAVtoFLACConverter:
             return str(local_ffmpeg)
         # Fall back to system PATH
         return "ffmpeg"
-            
+
+    def calculate_ffmpeg_threads(self, parallel_conversions):
+        """
+        Calculate optimal FFmpeg threads per process to avoid CPU oversubscription
+
+        Args:
+            parallel_conversions: Number of parallel file conversions
+
+        Returns:
+            Number of threads each FFmpeg process should use
+        """
+        max_cores = os.cpu_count() or 1
+
+        # Each FFmpeg process should use a fraction of available cores
+        # to avoid oversubscription when multiple conversions run in parallel
+        ffmpeg_threads = max(1, max_cores // parallel_conversions)
+
+        return ffmpeg_threads
+
+    def format_duration(self, seconds):
+        """
+        Format duration in seconds to a human-readable string
+
+        Args:
+            seconds: Duration in seconds
+
+        Returns:
+            Formatted string like "2m 30s" or "45s"
+        """
+        minutes = int(seconds // 60)
+        remaining_seconds = int(seconds % 60)
+
+        if minutes > 0:
+            return f"{minutes}m {remaining_seconds}s"
+        else:
+            return f"{remaining_seconds}s"
+
     def log_message(self, message):
         """Add message to log display and file"""
         timestamp = datetime.now().strftime("%H:%M:%S")
@@ -619,12 +659,12 @@ class WAVtoFLACConverter:
         
         return sorted(set(wav_files))
         
-    def convert_single_file(self, wav_path, input_dir, output_dir, original_input_dir=None):
+    def convert_single_file(self, wav_path, input_dir, output_dir, ffmpeg_threads, original_input_dir=None):
         """Convert a single WAV file to FLAC (with proper background processing)"""
         start_time = time.time()
         input_size = 0
         output_size = 0
-        
+
         try:
             # Calculate relative path (matching original logic)
             if original_input_dir and original_input_dir != input_dir:
@@ -633,23 +673,23 @@ class WAVtoFLACConverter:
             else:
                 # Direct conversion - calculate relative path normally
                 relative_path = wav_path.relative_to(input_dir)
-                
+
             # Create output path maintaining directory structure (like original)
             output_filename = wav_path.stem + ".flac"
             output_file_path = output_dir / relative_path.parent / output_filename
-            
+
             # Create subdirectories if they don't exist (like original)
             output_file_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             # Get input file size (like original)
             input_size = wav_path.stat().st_size
-            
+
             # Build FFmpeg command with optimization flags (like original)
             ffmpeg_path = self.get_ffmpeg_path()
             ffmpeg_cmd = [
                 ffmpeg_path,
                 '-i', str(wav_path),                    # Input file (may be cached)
-                '-threads', str(self.thread_count.get()), # Thread count
+                '-threads', str(ffmpeg_threads),        # Thread count (calculated to avoid oversubscription)
                 '-c:a', 'flac',                         # Audio codec: FLAC
                 '-compression_level', str(self.compression_level.get()), # FLAC compression (0=fast, 12=best)
                 '-y',                                   # Overwrite output files
@@ -699,60 +739,147 @@ class WAVtoFLACConverter:
             error_msg = f"Unexpected error: {str(e)}"
             return False, str(relative_path), error_msg, input_size, 0
             
+    def check_cache_disk_space(self, wav_files, cache_dir):
+        """Check if cache directory has enough space for all WAV files"""
+        # Calculate total size of all WAV files
+        total_size_bytes = sum(f.stat().st_size for f in wav_files)
+        total_size_gb = total_size_bytes / (1024 ** 3)
+
+        try:
+            # Get disk space information for cache directory
+            _, _, free_space = shutil.disk_usage(cache_dir)
+            free_space_gb = free_space / (1024 ** 3)
+
+            # Add safety margin
+            required_space_bytes = total_size_bytes * DISK_SPACE_SAFETY_MARGIN
+            required_space_gb = required_space_bytes / (1024 ** 3)
+
+            margin_percent = int((DISK_SPACE_SAFETY_MARGIN - 1) * 100)
+            self.log_message(f"Disk space check:")
+            self.log_message(f"  WAV files to cache: {total_size_gb:.2f} GB")
+            self.log_message(f"  Required (with {margin_percent}% margin): {required_space_gb:.2f} GB")
+            self.log_message(f"  Available space: {free_space_gb:.2f} GB")
+
+            if self.logger:
+                self.logger.info(f"Disk space check: {total_size_gb:.2f} GB needed, {free_space_gb:.2f} GB available")
+
+            if free_space < required_space_bytes:
+                shortage_gb = (required_space_bytes - free_space) / (1024 ** 3)
+                error_msg = f"Insufficient disk space! Need {shortage_gb:.2f} GB more."
+                self.log_message(f"❌ {error_msg}")
+                if self.logger:
+                    self.logger.error(error_msg)
+                return False
+            else:
+                remaining_gb = (free_space - required_space_bytes) / (1024 ** 3)
+                success_msg = f"✅ Sufficient space available ({remaining_gb:.2f} GB will remain free)"
+                self.log_message(success_msg)
+                if self.logger:
+                    self.logger.info(success_msg)
+                return True
+
+        except (OSError, PermissionError) as e:
+            error_msg = f"Could not check disk space: {e}"
+            self.log_message(f"⚠️  Warning: {error_msg}")
+            if self.logger:
+                self.logger.warning(error_msg)
+            # Ask user if they want to proceed anyway
+            result = messagebox.askyesno("Disk Space Check Failed",
+                                        f"Could not verify disk space: {e}\n\n"
+                                        "Proceed without disk space verification?")
+            return result
+
+    def copy_single_file_to_cache(self, wav_file, input_dir, cache_dir, file_index, total_files):
+        """Copy a single WAV file to local cache"""
+        try:
+            relative_path = wav_file.relative_to(input_dir)
+            cached_file = cache_dir / relative_path
+
+            # Create subdirectories in cache
+            cached_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file
+            file_size = wav_file.stat().st_size
+            start_time = time.time()
+
+            shutil.copy2(wav_file, cached_file)
+
+            copy_time = time.time() - start_time
+            copy_speed = file_size / copy_time / (1024 * 1024) if copy_time > 0 else 0
+
+            return True, cached_file, relative_path, file_size, copy_speed, file_index, total_files
+
+        except (OSError, IOError, PermissionError) as e:
+            try:
+                relative_path = wav_file.relative_to(input_dir)
+            except ValueError:
+                relative_path = Path(wav_file.name)
+            return False, None, relative_path, 0, 0, file_index, total_files, f"File operation error: {str(e)}"
+        except Exception as e:
+            try:
+                relative_path = wav_file.relative_to(input_dir)
+            except ValueError:
+                relative_path = Path(wav_file.name)
+            return False, None, relative_path, 0, 0, file_index, total_files, f"Unexpected error: {str(e)}"
+
     def copy_files_to_cache(self, wav_files, input_dir, cache_dir):
-        """Copy WAV files to cache directory (with logging like original script)"""
+        """Copy WAV files to cache directory using optimized concurrent threads"""
         self.log_message(f"Copying {len(wav_files)} files to local cache...")
-        
+
         if self.logger:
             self.logger.info(f"Starting cache operation for {len(wav_files)} files")
             self.logger.info(f"Cache directory: {str(cache_dir)}")
-        
+
         cached_files = []
         failed_copies = []
-        
+        completed_count = 0
+
         try:
             cache_path = Path(cache_dir)
             cache_path.mkdir(parents=True, exist_ok=True)
-            
-            for i, wav_file in enumerate(wav_files):
-                if not self.is_converting:  # Check if stopped
-                    break
-                    
-                try:
-                    relative_path = wav_file.relative_to(input_dir)
-                    cached_file = cache_path / relative_path
-                    
-                    # Create subdirectories in cache
-                    cached_file.parent.mkdir(parents=True, exist_ok=True)
-                    
-                    # Copy file with timing (like original)
-                    file_size = wav_file.stat().st_size
-                    start_time = time.time()
-                    
-                    shutil.copy2(wav_file, cached_file)
-                    
-                    copy_time = time.time() - start_time
-                    copy_speed = file_size / copy_time / (1024 * 1024) if copy_time > 0 else 0
-                    
-                    cached_files.append(cached_file)
-                    
-                    # Log like original script (every 10 files or for small batches)
-                    if (i + 1) % 10 == 0 or len(wav_files) <= 20:
-                        progress_msg = f"Cached {i + 1}/{len(wav_files)} files..."
-                        self.log_message(f"✓ {progress_msg}")
+
+            # Use more threads for I/O operations (copying is I/O bound, not CPU bound)
+            copy_threads = min(CACHE_COPY_THREADS, len(wav_files))
+
+            # Use ThreadPoolExecutor for file copying
+            with ThreadPoolExecutor(max_workers=copy_threads) as executor:
+                # Submit all copy tasks
+                future_to_file = {
+                    executor.submit(self.copy_single_file_to_cache, wav_file, input_dir, cache_path, i+1, len(wav_files)): wav_file
+                    for i, wav_file in enumerate(wav_files)
+                }
+
+                # Process completed tasks as they finish
+                for future in as_completed(future_to_file):
+                    if not self.is_converting:  # Check if stopped
+                        break
+
+                    result = future.result()
+
+                    if result[0]:  # Success
+                        _, cached_file, relative_path, _, copy_speed, _, total_files = result
+                        cached_files.append(cached_file)
+                        completed_count += 1
+
+                        # Show progress every 10 files or for small batches
+                        if completed_count % 10 == 0 or len(wav_files) <= 20:
+                            progress_msg = f"Cached {completed_count}/{total_files} files..."
+                            self.log_message(f"✓ {progress_msg}")
+                            if self.logger:
+                                self.logger.info(f"Cached: {relative_path} ({copy_speed:.1f} MB/s)")
+
+                        self.update_progress(completed_count, len(wav_files), f"Caching: {relative_path.name}")
+
+                    else:  # Failed
+                        _, _, relative_path, _, _, _, total_files, error_msg = result
+                        failed_copies.append((future_to_file[future], error_msg))
+                        completed_count += 1
+
+                        error_msg_display = f"Cache failed: {relative_path}"
+                        self.log_message(f"✗ {error_msg_display}")
                         if self.logger:
-                            self.logger.info(f"Cached: {relative_path} ({copy_speed:.1f} MB/s)")
-                    
-                    self.update_progress(i + 1, len(wav_files), f"Caching: {relative_path.name}")
-                    
-                except Exception as e:
-                    relative_path = wav_file.relative_to(input_dir)
-                    failed_copies.append((wav_file, str(e)))
-                    error_msg = f"Cache failed: {relative_path}"
-                    self.log_message(f"✗ {error_msg}")
-                    if self.logger:
-                        self.logger.error(f"Cache failed for {relative_path}: {e}")
-                
+                            self.logger.error(f"✗ Cache failed: {relative_path} - {error_msg}")
+
         except Exception as e:
             error_msg = f"Cache setup error: {e}"
             self.log_message(f"✗ {error_msg}")
@@ -774,33 +901,53 @@ class WAVtoFLACConverter:
         return cached_files
         
     def cleanup_cache(self, cache_dir):
-        """Clean up the cache directory (with logging like original script)"""
+        """
+        Clean up the temporary cache directory created during conversion.
+
+        This function safely deletes the unique cache subdirectory (e.g., wav2flac_cache_20250113_143022)
+        that was created specifically for this conversion session.
+
+        Args:
+            cache_dir: Path to the unique cache subdirectory to delete
+        """
         try:
             cache_path = Path(cache_dir)
-            if cache_path.exists():
-                self.log_message("Cleaning up cache directory...")
+
+            if not cache_path.exists():
+                # Cache directory doesn't exist, no cleanup needed
+                return
+
+            # Safety check: verify this looks like our cache directory
+            if not cache_path.name.startswith("wav2flac_cache_"):
+                self.log_message(f"⚠️  Warning: Cache directory name doesn't match expected pattern.")
+                self.log_message(f"   Expected: wav2flac_cache_YYYYMMDD_HHMMSS")
+                self.log_message(f"   Got: {cache_path.name}")
+                self.log_message(f"   Skipping cleanup for safety. You may need to manually delete: {cache_path}")
                 if self.logger:
-                    self.logger.info("Starting cache cleanup")
-                
-                # Count files before deletion for logging (like original)
-                file_count = sum(1 for _ in cache_path.rglob('*') if _.is_file())
-                
-                shutil.rmtree(str(cache_path))
-                
-                cleanup_msg = f"Cache cleanup completed. Removed {file_count} cached files."
-                self.log_message(f"✓ {cleanup_msg}")
-                if self.logger:
-                    self.logger.info(cleanup_msg)
-            else:
-                if self.logger:
-                    self.logger.debug("Cache directory does not exist, no cleanup needed")
-                    
-        except Exception as e:
-            error_msg = f"Error during cache cleanup: {e}"
-            self.log_message(f"Warning: {error_msg}")
-            self.log_message("You may need to manually delete the cache directory.")
+                    self.logger.warning(f"Skipped cleanup for unexpected cache dir name: {cache_path}")
+                return
+
+            self.log_message(f"Cleaning up cache directory: {cache_path.name}...")
             if self.logger:
-                self.logger.error(error_msg)
+                self.logger.info("Starting cache cleanup")
+
+            # Count files before deletion for logging
+            file_count = sum(1 for _ in cache_path.rglob('*') if _.is_file())
+
+            # Delete the entire unique cache subdirectory
+            shutil.rmtree(cache_path)
+
+            cleanup_msg = f"Cache cleanup completed. Removed {file_count} cached files."
+            self.log_message(f"✓ {cleanup_msg}")
+            if self.logger:
+                self.logger.info(f"Cache cleanup: deleted {file_count} files from {cache_path}")
+
+        except (OSError, PermissionError) as e:
+            error_msg = f"Error during cache cleanup: {e}"
+            self.log_message(f"⚠️  Warning: {error_msg}")
+            self.log_message(f"   You may need to manually delete: {cache_path}")
+            if self.logger:
+                self.logger.error(f"Cache cleanup failed: {e}", exc_info=True)
             
     def conversion_worker(self):
         """Main conversion worker thread"""
@@ -830,9 +977,34 @@ class WAVtoFLACConverter:
             conversion_input_dir = input_dir
             original_input_dir = input_dir
             cache_dir_path = None
-            
+
             if self.use_cache.get():
-                cache_dir_path = Path(self.cache_dir.get())
+                # Create a unique timestamped subdirectory for safe cleanup
+                parent_cache_dir = Path(self.cache_dir.get())
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                cache_dir_path = parent_cache_dir / f"wav2flac_cache_{timestamp}"
+
+                try:
+                    cache_dir_path.mkdir(parents=True, exist_ok=False)
+                    self.log_message(f"Created cache subdirectory: {cache_dir_path.name}")
+                    if self.logger:
+                        self.logger.info(f"Cache subdirectory: {cache_dir_path}")
+                except Exception as e:
+                    self.log_message(f"✗ Failed to create cache directory: {e}")
+                    return
+
+                # Check if there's enough disk space for caching
+                if not self.check_cache_disk_space(wav_files, cache_dir_path):
+                    self.log_message("❌ Cannot proceed due to insufficient disk space for caching.")
+                    if self.logger:
+                        self.logger.error("Conversion cancelled: insufficient disk space for cache")
+                    # Clean up the empty cache directory we just created
+                    try:
+                        cache_dir_path.rmdir()
+                    except:
+                        pass
+                    return
+
                 cached_files = self.copy_files_to_cache(wav_files, input_dir, cache_dir_path)
                 
                 if not self.is_converting:  # Stopped during caching
@@ -847,15 +1019,20 @@ class WAVtoFLACConverter:
             failed = 0
             total_input_size = 0
             total_output_size = 0
-            
+
             start_time = time.time()
-            
+
+            # Calculate FFmpeg threads to avoid CPU oversubscription
+            parallel_conversions = self.thread_count.get()
+            ffmpeg_threads = self.calculate_ffmpeg_threads(parallel_conversions)
+            self.log_message(f"Using {parallel_conversions} parallel conversions with {ffmpeg_threads} thread(s) per FFmpeg process")
+
             # Use ThreadPoolExecutor for conversion
-            with ThreadPoolExecutor(max_workers=self.thread_count.get()) as executor:
+            with ThreadPoolExecutor(max_workers=parallel_conversions) as executor:
                 # Submit all tasks
                 futures = {
-                    executor.submit(self.convert_single_file, wav_file, conversion_input_dir, 
-                                  output_dir, original_input_dir): wav_file 
+                    executor.submit(self.convert_single_file, wav_file, conversion_input_dir,
+                                  output_dir, ffmpeg_threads, original_input_dir): wav_file
                     for wav_file in files_to_convert
                 }
                 
@@ -882,7 +1059,7 @@ class WAVtoFLACConverter:
             
             if successful > 0:
                 compression_ratio = ((total_input_size - total_output_size) / total_input_size * 100) if total_input_size > 0 else 0
-                self.log_message(f"Conversion completed in {total_time:.1f}s")
+                self.log_message(f"Conversion completed in {self.format_duration(total_time)}")
                 self.log_message(f"Successful: {successful}, Failed: {failed}")
                 self.log_message(f"Overall compression: {compression_ratio:.1f}%")
             
