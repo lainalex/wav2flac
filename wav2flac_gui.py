@@ -58,7 +58,7 @@ DISK_SPACE_SAFETY_MARGIN = 1.2  # 20% extra space required for caching
 INPUT_CACHE_BATCH_SIZE = 2000  # For hybrid batch caching: cache and convert N files at a time (allows full CPU utilization with limited cache space)
 
 # To disable update checking completely, uncomment the line below:
-# UPDATE_CHECK_URL = None
+# UPDATE_CHECK_URL = None (test)
 
 # Application metadata for security scanning
 APP_METADATA = {
