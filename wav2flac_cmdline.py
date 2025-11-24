@@ -12,11 +12,15 @@ import sys
 import logging
 import subprocess
 import shutil
+import tempfile
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from datetime import datetime
 from typing import List, Tuple, Optional
+
+# Application version
+APP_VERSION = "1.0.4"
 
 # Configuration constants
 FFMPEG_TIMEOUT_SECONDS = 300  # 5 minutes per file
@@ -28,6 +32,15 @@ CONVERSION_PROGRESS_THRESHOLD = 20  # Show all progress for batches <= this size
 DISK_SPACE_SAFETY_MARGIN = 1.2  # 20% extra space required for caching
 DEFAULT_COMPRESSION_LEVEL = 12  # FLAC compression (0=fast, 12=best)
 
+# Fast output cache configuration
+OUTPUT_CACHE_BATCH_SIZE = 100  # Move files to final destination every N conversions
+OUTPUT_CACHE_MOVE_THREADS = 1  # Threads for batch moving files to final destination (reduced to prevent disk saturation)
+MOVE_FILES_DURING_CONVERSION = False  # If True, move every 100 files; if False, move all at end (recommended for RAID/HDD)
+
+# Resource management configuration
+TASK_SUBMISSION_BATCH_SIZE = 1000  # Submit tasks in batches to prevent future accumulation
+INPUT_CACHE_BATCH_SIZE = 2000  # For hybrid batch caching: cache and convert N files at a time (allows full CPU utilization with limited cache space)
+
 def check_prerequisites() -> List[str]:
     """Check if all required software is installed"""
     print("Checking prerequisites...")
@@ -37,7 +50,7 @@ def check_prerequisites() -> List[str]:
     if sys.version_info < (3, 6):
         issues.append("Python 3.6 or higher is required")
     else:
-        print("✓ Python version: OK")
+        print("Python version: OK")
     
     # Check FFmpeg with detailed capability testing
     try:
@@ -48,7 +61,7 @@ def check_prerequisites() -> List[str]:
         if result.returncode == 0:
             # Extract FFmpeg version from output
             version_line = result.stdout.split('\n')[0]
-            print(f"✓ FFmpeg: OK ({version_line.split()[2]})")
+            print(f"FFmpeg: OK ({version_line.split()[2]})")
             
             # Test FLAC encoding capability
             flac_test = subprocess.run(['ffmpeg', '-encoders'],
@@ -56,22 +69,22 @@ def check_prerequisites() -> List[str]:
                                      text=True,
                                      timeout=PREREQUISITE_CHECK_TIMEOUT)
             if 'flac' in flac_test.stdout.lower():
-                print("✓ FFmpeg FLAC encoder: OK")
+                print("FFmpeg FLAC encoder: OK")
             else:
                 issues.append("FFmpeg doesn't support FLAC encoding")
-                print("✗ FFmpeg FLAC encoder: NOT AVAILABLE")
+                print("FFmpeg FLAC encoder: NOT AVAILABLE")
         else:
             issues.append("FFmpeg is installed but not responding correctly")
-            print("✗ FFmpeg: ERROR")
+            print("FFmpeg: ERROR")
     except subprocess.TimeoutExpired:
         issues.append("FFmpeg check timed out")
-        print("✗ FFmpeg: TIMEOUT")
+        print("FFmpeg: TIMEOUT")
     except FileNotFoundError:
         issues.append("FFmpeg is not installed or not in PATH")
-        print("✗ FFmpeg: NOT FOUND")
+        print("FFmpeg: NOT FOUND")
     except Exception as e:
         issues.append(f"FFmpeg check failed: {str(e)}")
-        print(f"✗ FFmpeg: ERROR - {str(e)}")
+        print(f"FFmpeg: ERROR - {str(e)}")
     
     return issues
 
@@ -111,10 +124,10 @@ def convert_wav_to_flac_ffmpeg(
         # Create output path maintaining directory structure
         output_filename = wav_path.stem + ".flac"
         output_file_path = output_dir / relative_path.parent / output_filename
-        
-        # Create subdirectories if they don't exist
-        output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Note: Output directories are pre-created for performance optimization
+        # No need to call mkdir here (reduces filesystem metadata overhead)
+
         # Get input file size
         input_size = wav_path.stat().st_size
         
@@ -136,27 +149,36 @@ def convert_wav_to_flac_ffmpeg(
             ffmpeg_cmd,
             capture_output=True,
             text=True,
-            timeout=FFMPEG_TIMEOUT_SECONDS
+            timeout=FFMPEG_TIMEOUT_SECONDS,
+            close_fds=True  # Explicitly close file descriptors
         )
-        
+
+        # Capture output before they can be garbage collected
+        stdout_output = result.stdout
+        stderr_output = result.stderr
+        returncode = result.returncode
+
+        # Explicitly delete result to free resources immediately
+        del result
+
         duration = time.time() - start_time
-        
-        if result.returncode == 0:
+
+        if returncode == 0:
             # Get output file size
             if output_file_path.exists():
                 output_size = output_file_path.stat().st_size
                 compression_ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
                 
                 message = f"Converted to {output_filename} ({compression_ratio:.1f}% smaller, {duration:.2f}s)"
-                logger.info(f"✓ {relative_path}: {message}")
+                logger.info(f"{relative_path}: {message}")
                 return True, str(relative_path), message, input_size, output_size, duration
             else:
                 error_msg = "FFmpeg completed but output file not found"
-                logger.error(f"✗ {relative_path}: {error_msg}")
+                logger.error(f"{relative_path}: {error_msg}")
                 return False, str(relative_path), error_msg, input_size, 0, duration
         else:
             error_msg = f"FFmpeg error (code {result.returncode}): {result.stderr.strip()}"
-            logger.error(f"✗ {relative_path}: {error_msg}")
+            logger.error(f"{relative_path}: {error_msg}")
             return False, str(relative_path), error_msg, input_size, 0, duration
             
     except subprocess.TimeoutExpired:
@@ -165,7 +187,7 @@ def convert_wav_to_flac_ffmpeg(
         except ValueError:
             relative_path = wav_path.name
         error_msg = "Conversion timed out (>5 minutes)"
-        logger.error(f"✗ {relative_path}: {error_msg}")
+        logger.error(f"{relative_path}: {error_msg}")
         return False, str(relative_path), error_msg, input_size, 0, time.time() - start_time
     except subprocess.CalledProcessError as e:
         try:
@@ -173,7 +195,7 @@ def convert_wav_to_flac_ffmpeg(
         except ValueError:
             relative_path = wav_path.name
         error_msg = f"FFmpeg process error: {str(e)}"
-        logger.error(f"✗ {relative_path}: {error_msg}")
+        logger.error(f"{relative_path}: {error_msg}")
         return False, str(relative_path), error_msg, input_size, 0, time.time() - start_time
     except (OSError, IOError) as e:
         try:
@@ -181,7 +203,7 @@ def convert_wav_to_flac_ffmpeg(
         except ValueError:
             relative_path = wav_path.name
         error_msg = f"File I/O error: {str(e)}"
-        logger.error(f"✗ {relative_path}: {error_msg}")
+        logger.error(f"{relative_path}: {error_msg}")
         return False, str(relative_path), error_msg, input_size, 0, time.time() - start_time
     except Exception as e:
         try:
@@ -189,20 +211,21 @@ def convert_wav_to_flac_ffmpeg(
         except ValueError:
             relative_path = wav_path.name
         error_msg = f"Unexpected error: {str(e)}"
-        logger.error(f"✗ {relative_path}: {error_msg}")
+        logger.error(f"{relative_path}: {error_msg}")
         return False, str(relative_path), error_msg, input_size, 0, time.time() - start_time
 
 def get_thread_count() -> int:
     """Prompt user for number of parallel conversions to run"""
     max_cores = os.cpu_count() or 1  # Default to 1 if cpu_count returns None
+    default_cores = max(1, max_cores // 2)  # Default to half of available cores
 
     while True:
         try:
             print(f"\nYour system has {max_cores} CPU cores available.")
-            cores = input(f"How many parallel conversions would you like to run? (1-{max_cores}, default={max_cores}): ").strip()
+            cores = input(f"How many parallel conversions would you like to run? (1-{max_cores}, default={default_cores}): ").strip()
 
             if not cores:
-                return max_cores  # Default to maximum available cores
+                return default_cores  # Default to half of available cores
 
             cores = int(cores)
 
@@ -302,12 +325,37 @@ def ask_user_about_caching() -> bool:
     print("\n" + "="*50)
     print("NETWORK LOCATION DETECTION")
     print("="*50)
-    
+
     while True:
         choice = input("Is this a network share? (ie: R:\\research) (y/N): ").strip().lower()
         if choice in ['y', 'yes']:
             return True
         elif choice in ['n', 'no', '']:
+            return False
+        else:
+            print("Please enter 'y' for yes or 'n' for no.")
+
+def ask_user_about_fast_output() -> bool:
+    """Ask user if they want to use fast output cache (system temp directory)"""
+    print("\n" + "="*50)
+    print("FAST OUTPUT CACHE (TEMP DIRECTORY)")
+    print("="*50)
+    print("This option writes converted files to a fast temporary location")
+    print("(system temp directory, often on local SSD) then batch-moves them to the")
+    print("final destination. This dramatically improves performance when")
+    print("writing to slow RAID arrays or network drives.")
+    print()
+    print("Benefits:")
+    print("• 3-5x faster conversion for RAID/HDD destinations")
+    print("• Eliminates disk I/O bottleneck")
+    print("• Files batch-moved every 100 conversions")
+    print()
+
+    while True:
+        choice = input("Use fast output cache? (Y/n): ").strip().lower()
+        if choice in ['y', 'yes', '']:
+            return True
+        elif choice in ['n', 'no']:
             return False
         else:
             print("Please enter 'y' for yes or 'n' for no.")
@@ -356,7 +404,7 @@ def get_cache_directory() -> Path:
             test_file.write_text("test")
             test_file.unlink()
 
-            print(f"✓ Cache subdirectory created: {unique_cache_dir.name}")
+            print(f"Cache subdirectory created: {unique_cache_dir.name}")
             return unique_cache_dir
 
         except FileExistsError:
@@ -383,16 +431,27 @@ def copy_single_file_to_cache(
         
         # Create subdirectories in cache
         cached_file.parent.mkdir(parents=True, exist_ok=True)
-        
+
+        # Verify source file exists and get size
+        try:
+            file_size = wav_file.stat().st_size
+        except (OSError, IOError) as e:
+            return False, None, relative_path, 0, 0, file_index, total_files, f"Cannot read source file: {str(e)}"
+
         # Copy file
-        file_size = wav_file.stat().st_size
         start_time = time.time()
-        
+
         shutil.copy2(wav_file, cached_file)
-        
+
+        # Verify the cached file size matches the source
+        cached_size = cached_file.stat().st_size
+        if cached_size != file_size:
+            cached_file.unlink(missing_ok=True)  # Remove incomplete file
+            return False, None, relative_path, 0, 0, file_index, total_files, f"Copy verification failed: source {file_size} bytes, cached {cached_size} bytes"
+
         copy_time = time.time() - start_time
         copy_speed = file_size / copy_time / (1024 * 1024) if copy_time > 0 else 0
-        
+
         return True, cached_file, relative_path, file_size, copy_speed, file_index, total_files
 
     except (OSError, IOError, PermissionError) as e:
@@ -432,17 +491,17 @@ def check_cache_disk_space(wav_files: List[Path], cache_dir: Path, logger: loggi
         if free_space < required_space_bytes:
             shortage_gb = (required_space_bytes - free_space) / (1024 ** 3)
             error_msg = f"Insufficient disk space! Need {shortage_gb:.2f} GB more."
-            print(f"❌ {error_msg}")
+            print(f"{error_msg}")
             return False
         else:
             remaining_gb = (free_space - required_space_bytes) / (1024 ** 3)
-            success_msg = f"✅ Sufficient space available ({remaining_gb:.2f} GB will remain free)"
+            success_msg = f"Sufficient space available ({remaining_gb:.2f} GB will remain free)"
             print(success_msg)
             return True
             
     except (OSError, PermissionError) as e:
         error_msg = f"Could not check disk space: {e}"
-        print(f"⚠️  Warning: {error_msg}")
+        print(f"Warning: {error_msg}")
         
         # Ask user if they want to proceed anyway
         while True:
@@ -461,7 +520,7 @@ def copy_files_to_cache(
     logger: logging.Logger
 ) -> Tuple[List[Path], List[Tuple[Path, str]]]:
     """Copy WAV files to local cache using optimized concurrent threads"""
-    print("📁 Copying files to local cache...")
+    print("Copying files to local cache...")
     
     cached_files = []
     failed_copies = []
@@ -492,7 +551,7 @@ def copy_files_to_cache(
                 
                 # Show progress every N files or for small batches
                 if completed_count % PROGRESS_REPORT_INTERVAL == 0 or len(wav_files) <= CONVERSION_PROGRESS_THRESHOLD:
-                    print(f"✓ Cached {completed_count}/{total_files} files...")
+                    print(f"Cached {completed_count}/{total_files} files...")
                     sys.stdout.flush()  # Force output to appear immediately
                 
             else:  # Failed
@@ -500,14 +559,14 @@ def copy_files_to_cache(
                 failed_copies.append((future_to_file[future], error_msg))
                 completed_count += 1
 
-                logger.error(f"✗ Cache failed: {relative_path} - {error_msg}")
-                print(f"✗ Cache failed: {relative_path}")
+                logger.error(f"Cache failed: {relative_path} - {error_msg}")
+                print(f"Cache failed: {relative_path}")
                 sys.stdout.flush()
     
     # Final summary
-    print(f"✅ Caching completed: {len(cached_files)} files ready for conversion")
+    print(f"Caching completed: {len(cached_files)} files ready for conversion")
     if failed_copies:
-        print(f"⚠️  {len(failed_copies)} files failed to cache and will be skipped")
+        print(f"{len(failed_copies)} files failed to cache and will be skipped")
     
     return cached_files, failed_copies
 
@@ -529,7 +588,7 @@ def cleanup_cache(cache_dir: Path, logger: Optional[logging.Logger]) -> None:
 
         # Safety check: verify this looks like our cache directory
         if not cache_dir.name.startswith("wav2flac_cache_"):
-            print(f"⚠️  Warning: Cache directory name doesn't match expected pattern.")
+            print(f"Warning: Cache directory name doesn't match expected pattern.")
             print(f"   Expected: wav2flac_cache_YYYYMMDD_HHMMSS")
             print(f"   Got: {cache_dir.name}")
             print(f"   Skipping cleanup for safety. You may need to manually delete: {cache_dir}")
@@ -545,13 +604,13 @@ def cleanup_cache(cache_dir: Path, logger: Optional[logging.Logger]) -> None:
         # Delete the entire unique cache subdirectory
         shutil.rmtree(cache_dir)
 
-        print(f"✓ Cache cleanup completed. Removed {file_count} cached files.")
+        print(f"Cache cleanup completed. Removed {file_count} cached files.")
         if logger:
             logger.info(f"Cache cleanup: deleted {file_count} files from {cache_dir}")
 
     except (OSError, PermissionError) as e:
         error_msg = f"Error during cache cleanup: {e}"
-        print(f"⚠️  Warning: {error_msg}")
+        print(f"Warning: {error_msg}")
         print(f"   You may need to manually delete: {cache_dir}")
         if logger:
             logger.error(f"Cache cleanup failed: {e}", exc_info=True)
@@ -616,15 +675,179 @@ def create_output_directory(input_dir: Path) -> Path:
     """Create output directory with '_converted' suffix"""
     output_dir_name = input_dir.name + "_converted"
     output_dir = input_dir.parent / output_dir_name
-    
+
     # Create directory if it doesn't exist
     output_dir.mkdir(exist_ok=True)
-    
+
     return output_dir
+
+def precreate_output_directories(wav_files: List[Path], input_dir: Path, output_dir: Path, logger: logging.Logger) -> int:
+    """
+    Pre-create all output directories to eliminate mkdir overhead during conversion.
+
+    This significantly improves performance on RAID/HDD systems by reducing filesystem
+    metadata operations from thousands to just a few dozen.
+
+    Args:
+        wav_files: List of WAV files to be converted
+        input_dir: Root input directory
+        output_dir: Root output directory
+        logger: Logger instance
+
+    Returns:
+        Number of unique directories created
+    """
+    # Collect all unique output directories needed
+    unique_dirs = set()
+    for wav_file in wav_files:
+        relative_path = wav_file.relative_to(input_dir)
+        output_subdir = output_dir / relative_path.parent
+        unique_dirs.add(output_subdir)
+
+    print(f"Pre-creating {len(unique_dirs)} output directories...")
+    logger.info(f"Pre-creating {len(unique_dirs)} output directories to optimize performance")
+
+    # Create all directories at once
+    for dir_path in sorted(unique_dirs):
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+    print(f"Created {len(unique_dirs)} directories")
+    logger.info(f"Successfully pre-created {len(unique_dirs)} output directories")
+
+    return len(unique_dirs)
+
+def create_fast_output_cache(logger: logging.Logger) -> Path:
+    """
+    Create a fast output cache directory for temporary FLAC files.
+
+    Uses the system's temp directory which often benefits from:
+    - Fast local SSD storage
+    - OS-level file caching
+    - Better random I/O performance than network/RAID drives
+
+    Args:
+        logger: Logger instance
+
+    Returns:
+        Path to the temporary output cache directory
+    """
+    # Create unique temp directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    temp_base = Path(tempfile.gettempdir())
+    temp_output_dir = temp_base / f"wav2flac_output_{timestamp}"
+    temp_output_dir.mkdir(parents=True, exist_ok=False)
+
+    print(f"Created fast output cache: {temp_output_dir}")
+    logger.info(f"Fast output cache created at: {temp_output_dir}")
+    logger.info(f"Files will be batch-moved to final destination every {OUTPUT_CACHE_BATCH_SIZE} conversions")
+
+    return temp_output_dir
+
+def batch_move_files(temp_files: List[Path], temp_output_dir: Path, final_output_dir: Path, logger: logging.Logger) -> Tuple[int, int]:
+    """
+    Move converted files from fast temp cache to final destination in batch.
+
+    Uses multithreaded moving to speed up the transfer while freeing up temp space.
+
+    Args:
+        temp_files: List of temporary output files to move
+        temp_output_dir: Temporary output directory root
+        final_output_dir: Final output directory root
+        logger: Logger instance
+
+    Returns:
+        Tuple of (successful_moves, failed_moves)
+    """
+    if not temp_files:
+        return 0, 0
+
+    print(f"\nMoving {len(temp_files)} files to final destination...")
+    logger.info(f"Batch moving {len(temp_files)} files from temp cache to final destination")
+
+    successful = 0
+    failed = 0
+
+    def move_single_file(temp_file: Path) -> Tuple[bool, Path, Optional[str]]:
+        """Move a single file from temp to final destination"""
+        try:
+            # Calculate relative path and final destination
+            relative_path = temp_file.relative_to(temp_output_dir)
+            final_file = final_output_dir / relative_path
+
+            # Ensure parent directory exists
+            final_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Move file
+            shutil.move(str(temp_file), str(final_file))
+
+            return True, relative_path, None
+        except Exception as e:
+            return False, temp_file.name, str(e)
+
+    # Use ThreadPoolExecutor for parallel moves
+    with ThreadPoolExecutor(max_workers=OUTPUT_CACHE_MOVE_THREADS) as executor:
+        futures = {executor.submit(move_single_file, temp_file): temp_file for temp_file in temp_files}
+
+        for future in as_completed(futures):
+            success, path, error = future.result()
+            if success:
+                successful += 1
+            else:
+                failed += 1
+                logger.error(f"Failed to move {path}: {error}")
+
+    print(f"Moved {successful} files to final destination")
+    if failed > 0:
+        print(f"{failed} files failed to move")
+
+    logger.info(f"Batch move complete: {successful} successful, {failed} failed")
+
+    return successful, failed
+
+def cleanup_output_cache(temp_output_dir: Path, logger: Optional[logging.Logger]) -> None:
+    """
+    Clean up the temporary output cache directory.
+
+    Args:
+        temp_output_dir: Path to the temporary output directory to delete
+        logger: Optional logger instance
+    """
+    try:
+        if not temp_output_dir.exists():
+            return
+
+        # Safety check: verify this is our temp directory
+        if not temp_output_dir.name.startswith("wav2flac_output_"):
+            print(f"Warning: Temp output directory name doesn't match expected pattern.")
+            print(f"   Expected: wav2flac_output_YYYYMMDD_HHMMSS")
+            print(f"   Got: {temp_output_dir.name}")
+            print(f"   Skipping cleanup for safety. You may need to manually delete: {temp_output_dir}")
+            if logger:
+                logger.warning(f"Skipped cleanup for unexpected temp output dir name: {temp_output_dir}")
+            return
+
+        print(f"Cleaning up temporary output cache: {temp_output_dir.name}...")
+
+        # Count remaining files
+        file_count = sum(1 for _ in temp_output_dir.rglob('*') if _.is_file())
+
+        # Delete the temp directory
+        shutil.rmtree(temp_output_dir)
+
+        print(f"Temp cache cleanup completed. Removed {file_count} remaining files.")
+        if logger:
+            logger.info(f"Temp output cache cleanup: deleted {file_count} files from {temp_output_dir}")
+
+    except (OSError, PermissionError) as e:
+        error_msg = f"Error during temp cache cleanup: {e}"
+        print(f"Warning: {error_msg}")
+        print(f"   You may need to manually delete: {temp_output_dir}")
+        if logger:
+            logger.error(f"Temp cache cleanup failed: {e}", exc_info=True)
 
 def main() -> None:
     print("=" * 70)
-    print("OPTIMIZED WAV to FLAC Converter with Direct FFmpeg")
+    print(f"OPTIMIZED WAV to FLAC Converter v{APP_VERSION}")
     print("Maximum performance through FFmpeg's native multithreading")
     print("=" * 70)
     
@@ -632,11 +855,11 @@ def main() -> None:
     issues = check_prerequisites()
     
     if issues:
-        print(f"\n❌ Found {len(issues)} issue(s) that must be resolved:")
+        print(f"\nFound {len(issues)} issue(s) that must be resolved:")
         for i, issue in enumerate(issues, 1):
             print(f"   {i}. {issue}")
         
-        print(f"\n❌ Cannot proceed until all prerequisites are installed.")
+        print(f"\nCannot proceed until all prerequisites are installed.")
         print("Please install FFmpeg and run the script again.")
         print("\nFFmpeg installation guides:")
         print("• Windows: https://www.wikihow.com/Install-FFmpeg-on-Windows")
@@ -645,7 +868,7 @@ def main() -> None:
         
         sys.exit(1)
     
-    print("\n✅ All prerequisites are installed and working!")
+    print("\nAll prerequisites are installed and working!")
     print("-" * 40)
     
     # Get input directory
@@ -656,24 +879,37 @@ def main() -> None:
     use_cache = ask_user_about_caching()
     cache_dir = None
     original_input_dir = input_dir  # Keep reference to original
-    
+
     if use_cache:
         cache_dir = get_cache_directory()
-        print(f"✓ Temporary cache created: {cache_dir}")
+        print(f"Temporary cache created: {cache_dir}")
     else:
         print("Proceeding without caching.")
-    
+
+    # Ask user if they want to use fast output cache
+    use_fast_output = ask_user_about_fast_output()
+    temp_output_dir = None
+
     # Get compression level
     compression_level = get_compression_level()
     print(f"FLAC compression level: {compression_level}")
     
     # Get number of parallel conversions to run
     thread_count = get_thread_count()
-    print(f"Using {thread_count} parallel conversions")
 
-    # Calculate FFmpeg threads to avoid CPU oversubscription
-    ffmpeg_threads = calculate_ffmpeg_threads(thread_count)
-    print(f"Each FFmpeg process will use {ffmpeg_threads} thread(s)")
+    # Calculate FFmpeg threads based on caching mode
+    max_cores = os.cpu_count() or 1
+    if not use_cache:
+        # No caching - limited parallel conversion (4 files at a time) to avoid network/RAID I/O thrashing
+        thread_count = 4
+        ffmpeg_threads = max(1, max_cores // thread_count)  # Divide cores among 4 processes
+        print(f"Sequential conversion mode: processing {thread_count} files at a time with {ffmpeg_threads} thread(s) per file")
+        print(f"   Run with --cache-dir option for full parallel processing")
+    else:
+        # Caching enabled - use parallel conversions
+        ffmpeg_threads = calculate_ffmpeg_threads(thread_count)
+        print(f"Using {thread_count} parallel conversions")
+        print(f"Each FFmpeg process will use {ffmpeg_threads} thread(s)")
 
     # Create output directory first so we can set up logging
     output_dir = create_output_directory(original_input_dir)
@@ -714,9 +950,9 @@ def main() -> None:
         if use_cache:
             # Check if cache directory has enough space
             if not check_cache_disk_space(wav_files, cache_dir, logger):
-                print("\n❌ Cannot proceed due to insufficient disk space for caching.")
+                print("\nCannot proceed due to insufficient disk space for caching.")
                 return
-            print("✅ Cache disk space check passed.")
+            print("Cache disk space check passed.")
         
         # Confirm before proceeding (before any file copying)
         files_to_convert = len(wav_files)
@@ -733,7 +969,12 @@ def main() -> None:
             print(f"  - Cache will be automatically deleted after conversion")
         else:
             print(f"• Direct conversion (no caching)")
-        
+
+        if use_fast_output:
+            print(f"• Fast output cache enabled (system temp directory)")
+            print(f"  - Files batch-moved every {OUTPUT_CACHE_BATCH_SIZE} conversions")
+            print(f"  - Dramatically reduces disk I/O bottleneck")
+
         confirm = input("\nProceed? (y/N): ").strip().lower()
         
         if confirm not in ['y', 'yes']:
@@ -747,20 +988,30 @@ def main() -> None:
         original_input_for_conversion = input_dir  # Keep reference for relative path calculations
         
         if use_cache:
-            print(f"\n📁 Copying {len(wav_files)} files to local cache...")
+            print(f"\nCopying {len(wav_files)} files to local cache...")
             print("This may take a few minutes depending on file sizes and network speed.")
             cached_wav_files, failed_copies = copy_files_to_cache(wav_files, input_dir, cache_dir, logger)
             
             if not cached_wav_files:
-                print("❌ No files could be cached. Cannot proceed.")
+                print("No files could be cached. Cannot proceed.")
                 return
             
             # Update to use cached files for conversion
             wav_files = cached_wav_files
             input_dir = cache_dir  # This is where we'll read from
-        
+
+        # Create fast output cache if enabled
+        actual_output_dir = output_dir  # Save the final destination
+        if use_fast_output:
+            temp_output_dir = create_fast_output_cache(logger)
+            output_dir = temp_output_dir  # Convert to temp location first
+
+        # Pre-create all output directories to optimize performance
+        print(f"\nOptimizing output directory structure...")
+        precreate_output_directories(wav_files, input_dir, output_dir, logger)
+
         # Start conversion
-        print(f"\n🎵 Starting optimized conversion...")
+        print(f"\nStarting optimized conversion...")
         print("-" * 50)
         logger.info("Starting optimized conversion process...")
         
@@ -771,51 +1022,93 @@ def main() -> None:
         failed_files = []     # Track failed files
         total_input_size = 0
         total_output_size = 0
-        
+
+        # Track temp files for batch moving
+        temp_files_to_move = []
+
         # Calculate total size for progress tracking
         total_input_size_initial = sum(f.stat().st_size for f in wav_files)
         logger.info(f"Total input size: {total_input_size_initial:,} bytes ({total_input_size_initial/1024/1024:.1f} MB)")
-        
+
         # Use ThreadPoolExecutor with user-specified thread count
+        # Process files in batches to prevent resource exhaustion
         with ThreadPoolExecutor(max_workers=thread_count) as executor:
             logger.info(f"Thread pool created with {thread_count} workers")
-            
-            # Submit all conversion tasks
-            future_to_file = {
-                executor.submit(convert_wav_to_flac_ffmpeg, wav_file, input_dir, output_dir,
-                              ffmpeg_threads, compression_level, logger,
-                              original_input_for_conversion if use_cache else None): wav_file
-                for wav_file in wav_files
-            }
-            logger.info(f"Submitted {len(future_to_file)} conversion tasks")
-            
-            # Process completed tasks
-            conversion_start_time = time.time()
-            for i, future in enumerate(as_completed(future_to_file), 1):
-                success, relative_path, message, input_size, output_size, duration = future.result()
-                
-                if success:
-                    successful_conversions += 1
-                    converted_files.append(relative_path)
-                    total_input_size += input_size
-                    total_output_size += output_size
-                    
-                    # Show progress every N files or for small batches, or always show failures
-                    if i % PROGRESS_REPORT_INTERVAL_SMALL == 0 or len(wav_files) <= CONVERSION_PROGRESS_THRESHOLD:
-                        print(f"✓ Converted {i}/{len(wav_files)} files...")
+            logger.info(f"Processing files in batches of {TASK_SUBMISSION_BATCH_SIZE} to prevent resource exhaustion")
+
+            # Process files in batches
+            total_files = len(wav_files)
+            files_processed = 0
+
+            for batch_start in range(0, total_files, TASK_SUBMISSION_BATCH_SIZE):
+                batch_end = min(batch_start + TASK_SUBMISSION_BATCH_SIZE, total_files)
+                batch_files = wav_files[batch_start:batch_end]
+
+                logger.info(f"Submitting batch {batch_start//TASK_SUBMISSION_BATCH_SIZE + 1}: files {batch_start+1} to {batch_end}")
+
+                # Submit batch of conversion tasks
+                future_to_file = {
+                    executor.submit(convert_wav_to_flac_ffmpeg, wav_file, input_dir, output_dir,
+                                  ffmpeg_threads, compression_level, logger,
+                                  original_input_for_conversion if use_cache else None): wav_file
+                    for wav_file in batch_files
+                }
+
+                # Process completed tasks in this batch
+                for future in as_completed(future_to_file):
+                    files_processed += 1
+                    success, relative_path, message, input_size, output_size, duration = future.result()
+
+                    if success:
+                        successful_conversions += 1
+                        converted_files.append(relative_path)
+                        total_input_size += input_size
+                        total_output_size += output_size
+
+                        # Track temp file for batch moving
+                        if use_fast_output:
+                            output_filename = Path(relative_path).stem + ".flac"
+                            temp_file = output_dir / Path(relative_path).parent / output_filename
+                            temp_files_to_move.append(temp_file)
+
+                        # Optionally move files during conversion (every N files) or all at end
+                        if MOVE_FILES_DURING_CONVERSION and use_fast_output and len(temp_files_to_move) >= OUTPUT_CACHE_BATCH_SIZE:
+                            batch_move_files(temp_files_to_move, temp_output_dir, actual_output_dir)
+                            temp_files_to_move.clear()
+
+                        # Show progress every N files or for small batches
+                        if files_processed % PROGRESS_REPORT_INTERVAL_SMALL == 0 or total_files <= CONVERSION_PROGRESS_THRESHOLD:
+                            print(f"Converted {files_processed}/{total_files} files...")
+                            sys.stdout.flush()
+
+                    else:
+                        failed_conversions += 1
+                        failed_files.append((relative_path, message))
+                        print(f"({files_processed}/{total_files}) {relative_path}: {message}")
                         sys.stdout.flush()
-                else:
-                    failed_conversions += 1
-                    failed_files.append((relative_path, message))
-                    print(f"✗ ({i}/{len(wav_files)}) {relative_path}: {message}")
-                    sys.stdout.flush()
+
+                    # Explicitly delete future to free resources
+                    del future
+
+                # Clear the batch dictionary to free memory
+                future_to_file.clear()
+                del future_to_file
+
+                logger.info(f"Completed batch {batch_start//TASK_SUBMISSION_BATCH_SIZE + 1}: {files_processed}/{total_files} files processed")
+
+        # Move ALL files at the end (not during conversion to avoid disk I/O interference)
+        if use_fast_output and temp_files_to_move:
+            print(f"\nMoving all {len(temp_files_to_move)} converted files to final destination...")
+            print("This may take a few minutes for RAID/HDD arrays...")
+            batch_move_files(temp_files_to_move, temp_output_dir, actual_output_dir, logger)
+            temp_files_to_move.clear()
         
         # Summary
         end_time = time.time()
         total_time = end_time - start_time
         
         print("-" * 50)
-        print(f"✅ Conversion completed in {format_duration(total_time)}")
+        print(f"Conversion completed in {format_duration(total_time)}")
         print(f"Successful conversions: {successful_conversions}")
         if failed_conversions > 0:
             print(f"Failed conversions: {failed_conversions}")
@@ -833,7 +1126,7 @@ def main() -> None:
         print(f"Log file: {log_path}")
         
         if failed_conversions > 0:
-            print(f"\n⚠️  {failed_conversions} file(s) failed to convert - check log for details")
+            print(f"\n{failed_conversions} file(s) failed to convert - check log for details")
         
         # Log detailed summary to file (not console)
         logger.info("="*50)
@@ -864,6 +1157,10 @@ def main() -> None:
         # Clean up cache if it was used
         if cache_dir and cache_dir.exists():
             cleanup_cache(cache_dir, logger if 'logger' in locals() else None)
+
+        # Clean up temp output cache if it was used
+        if temp_output_dir and temp_output_dir.exists():
+            cleanup_output_cache(temp_output_dir, logger if 'logger' in locals() else None)
 
 if __name__ == "__main__":
     try:

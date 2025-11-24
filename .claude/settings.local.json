@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(for func in \"on_input_dir_changed\" \"process_queues\" \"cleanup_output_cache\" \"precreate_output_directories\")",
+      "Bash(do echo \"=== Checking: $func ===\")",
+      "Bash(done)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
