@@ -131,13 +131,15 @@ def convert_wav_to_flac_ffmpeg(
         # Get input file size
         input_size = wav_path.stat().st_size
         
-        # Build FFmpeg command with optimization flags
+        # Build FFmpeg command with optimization flags and metadata preservation
         ffmpeg_cmd = [
             'ffmpeg',
             '-i', str(wav_path),           # Input file (may be cached)
             '-threads', str(ffmpeg_threads), # Thread count
             '-c:a', 'flac',                # Audio codec: FLAC
             '-compression_level', str(compression_level),  # FLAC compression (0=fast, 12=best)
+            '-map_metadata', '0',          # Copy all metadata from input
+            '-write_bext', '1',            # Preserve Broadcast Wave Format (BWF) metadata
             '-y',                          # Overwrite output files
             '-v', 'error',                 # Only show errors (reduces overhead)
             '-nostdin',                    # Don't wait for stdin input
@@ -168,7 +170,24 @@ def convert_wav_to_flac_ffmpeg(
             if output_file_path.exists():
                 output_size = output_file_path.stat().st_size
                 compression_ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
-                
+
+                # Preserve file timestamps from original WAV to output FLAC
+                # If we're using cache, get timestamps from the original file location
+                if original_input_dir:
+                    # Caching is enabled - get original file path
+                    original_wav_path = original_input_dir / relative_path
+                else:
+                    # No caching - wav_path is already the original
+                    original_wav_path = wav_path
+
+                try:
+                    # Get timestamps from original WAV file
+                    stat_info = original_wav_path.stat()
+                    # Copy modification time and access time to FLAC file
+                    os.utime(output_file_path, (stat_info.st_atime, stat_info.st_mtime))
+                except (OSError, IOError) as e:
+                    logger.warning(f"{relative_path}: Could not preserve file timestamps: {e}")
+
                 message = f"Converted to {output_filename} ({compression_ratio:.1f}% smaller, {duration:.2f}s)"
                 logger.info(f"{relative_path}: {message}")
                 return True, str(relative_path), message, input_size, output_size, duration

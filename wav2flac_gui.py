@@ -754,7 +754,7 @@ class WAVtoFLACConverter:
             # Get input file size (like original)
             input_size = wav_path.stat().st_size
 
-            # Build FFmpeg command with optimization flags (like original)
+            # Build FFmpeg command with optimization flags and metadata preservation
             ffmpeg_path = self.get_ffmpeg_path()
             ffmpeg_cmd = [
                 ffmpeg_path,
@@ -762,6 +762,8 @@ class WAVtoFLACConverter:
                 '-threads', str(ffmpeg_threads),        # Thread count (calculated to avoid oversubscription)
                 '-c:a', 'flac',                         # Audio codec: FLAC
                 '-compression_level', str(self.compression_level.get()), # FLAC compression (0=fast, 12=best)
+                '-map_metadata', '0',                   # Copy all metadata from input
+                '-write_bext', '1',                     # Preserve Broadcast Wave Format (BWF) metadata
                 '-y',                                   # Overwrite output files
                 '-v', 'error',                          # Only show errors (reduces overhead)
                 '-nostdin',                             # Don't read from stdin (prevents hanging)
@@ -789,7 +791,25 @@ class WAVtoFLACConverter:
                 if output_file_path.exists():
                     output_size = output_file_path.stat().st_size
                     compression_ratio = (1 - output_size / input_size) * 100 if input_size > 0 else 0
-                    
+
+                    # Preserve file timestamps from original WAV to output FLAC
+                    # If we're using cache, get timestamps from the original file location
+                    if original_input_dir and original_input_dir != input_dir:
+                        # Caching is enabled - get original file path
+                        original_wav_path = original_input_dir / relative_path
+                    else:
+                        # No caching - wav_path is already the original
+                        original_wav_path = wav_path
+
+                    try:
+                        # Get timestamps from original WAV file
+                        stat_info = original_wav_path.stat()
+                        # Copy modification time and access time to FLAC file
+                        os.utime(output_file_path, (stat_info.st_atime, stat_info.st_mtime))
+                    except (OSError, IOError) as e:
+                        if self.logger:
+                            self.logger.warning(f"{relative_path}: Could not preserve file timestamps: {e}")
+
                     # Message format exactly like original script
                     message = f"Converted to {output_filename} ({compression_ratio:.1f}% smaller, {duration:.2f}s)"
                     return True, str(relative_path), message, input_size, output_size
