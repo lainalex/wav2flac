@@ -40,19 +40,17 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 import tkinter.font as tkfont
 
 def create_ssl_context():
-    """Create SSL context that includes Windows certificate store (handles corporate proxies)"""
-    ctx = ssl.create_default_context()
-    if hasattr(ssl, 'enum_certificates'):
-        for store in ('CA', 'ROOT'):
-            try:
-                for cert, encoding, _ in ssl.enum_certificates(store):
-                    if encoding == 'x509_asn':
-                        try:
-                            ctx.load_verify_locations(cadata=cert)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+    """Create SSL context using certifi + Windows certificate store"""
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ctx = ssl.create_default_context()
+    # Also load Windows certificate store (handles corporate proxy CAs)
+    try:
+        ctx.load_default_certs()
+    except Exception:
+        pass
     return ctx
 
 # Try to import packaging for version comparison, use simple fallback if not available
@@ -1531,46 +1529,54 @@ class WAVtoFLACConverter:
                 status = f"Downloading: {downloaded_mb:.1f} / {size_mb:.1f} MB"
                 self.update_install_progress(status, progress)
         
-        # Use proper SSL context for secure downloads
+        # Use PowerShell (Windows native TLS/Schannel) - works with corporate proxies and custom CAs
+        if sys.platform == 'win32':
+            try:
+                self.update_install_progress("Downloading FFmpeg...", 10)
+                ps_cmd = (
+                    '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
+                    f'Invoke-WebRequest -Uri "{url}" -OutFile "{filepath}" -UseBasicParsing'
+                )
+                result = subprocess.run(
+                    ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_cmd],
+                    capture_output=True, text=True, timeout=300
+                )
+                if result.returncode != 0:
+                    raise Exception(result.stderr.strip() or 'PowerShell download failed')
+                self.update_install_progress("Downloading FFmpeg...", 70)
+                self.log_message("Download completed successfully")
+                return
+            except Exception as e:
+                if 'cancelled' in str(e):
+                    raise Exception("Download cancelled")
+                self.log_message(f"PowerShell download failed, trying urllib: {e}")
+
+        # Fallback: urllib with certifi SSL context (non-Windows or if PowerShell fails)
         try:
             ssl_context = create_ssl_context()
-            opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
-            urllib.request.install_opener(opener)
-
-            # Add user agent for better compatibility
             request = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
-
-            # Download with progress tracking
-            with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
+            with urllib.request.urlopen(request, context=ssl_context, timeout=300) as response:
                 total_size = int(response.getheader('Content-Length', 0))
                 block_size = 8192
                 downloaded = 0
-                
                 with open(filepath, 'wb') as f:
                     while True:
                         if not self.is_installing_ffmpeg:
                             raise urllib.error.URLError("Download cancelled")
-                            
                         buffer = response.read(block_size)
                         if not buffer:
                             break
-                            
                         f.write(buffer)
                         downloaded += len(buffer)
-                        
-                        # Update progress
                         if total_size > 0:
                             progress = min(int((downloaded / total_size) * 70), 70)
                             downloaded_mb = downloaded / (1024 * 1024)
                             total_mb = total_size / (1024 * 1024)
-                            status = f"Downloading: {downloaded_mb:.1f} / {total_mb:.1f} MB"
-                            self.update_install_progress(status, progress)
-                            
+                            self.update_install_progress(f"Downloading: {downloaded_mb:.1f} / {total_mb:.1f} MB", progress)
             self.log_message("Download completed successfully")
             return
-            
         except Exception as e:
             error_msg = f"Download failed: {str(e)}"
             if "cancelled" not in str(e):
@@ -1701,43 +1707,50 @@ class WAVtoFLACConverter:
     def check_for_updates_worker(self):
         """Background worker to check for application updates"""
         try:
-            # Create SSL context for HTTPS requests
-            ssl_context = create_ssl_context()
-
-            # Create request with standard user agent
-            request = urllib.request.Request(
-                UPDATE_CHECK_URL,
-                headers={'User-Agent': f'WAV2FLAC-AudioConverter/{APP_VERSION} (Windows; Audio-Tool)'}
-            )
-
-            # Make request with timeout
-            with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
-                if response.status == 200:
+            # Use PowerShell on Windows (native TLS - works with corporate proxies)
+            if sys.platform == 'win32':
+                ps_cmd = (
+                    '[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;'
+                    f'(Invoke-WebRequest -Uri "{UPDATE_CHECK_URL}" -UseBasicParsing '
+                    f'-Headers @{{\'User-Agent\'=\'WAV2FLAC-AudioConverter/{APP_VERSION}\'}}).Content'
+                )
+                result = subprocess.run(
+                    ['powershell', '-NoProfile', '-NonInteractive', '-Command', ps_cmd],
+                    capture_output=True, text=True, timeout=15
+                )
+                if result.returncode != 0:
+                    raise Exception(result.stderr.strip() or 'PowerShell request failed')
+                data = json.loads(result.stdout.strip())
+            else:
+                ssl_context = create_ssl_context()
+                request = urllib.request.Request(
+                    UPDATE_CHECK_URL,
+                    headers={'User-Agent': f'WAV2FLAC-AudioConverter/{APP_VERSION} (Audio-Tool)'}
+                )
+                with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
                     data = json.loads(response.read().decode('utf-8'))
-                    
-                    # Extract version from tag_name (assuming format like "v1.0.0" or "1.0.0")
-                    tag_name = data.get('tag_name', '')
-                    latest_version = tag_name.lstrip('v')  # Remove 'v' prefix if present
-                    
-                    if latest_version and self.compare_versions(APP_VERSION, latest_version):
-                        self.latest_version = latest_version
-                        self.update_available = True
-                        
-                        # Update UI on main thread
-                        update_text = f"Update available: v{latest_version} (click to view)"
-                        self.root.after(0, lambda: self.update_status_var.set(update_text))
-                        self.root.after(0, lambda: self.update_status_label.config(foreground='blue', cursor='hand2'))
-                        
-                        self.log_message(f"Update available: v{latest_version}")
-                    else:
-                        # Up to date
-                        self.root.after(0, lambda: self.update_status_var.set("Application is up to date"))
-                        self.root.after(0, lambda: self.update_status_label.config(foreground='green'))
-                        
-                        # Hide status after a few seconds
-                        self.root.after(3000, lambda: self.update_status_var.set(""))
-                else:
-                    raise Exception(f"HTTP {response.status}")
+
+            # Extract version from tag_name (assuming format like "v1.0.0" or "1.0.0")
+            tag_name = data.get('tag_name', '')
+            latest_version = tag_name.lstrip('v')  # Remove 'v' prefix if present
+
+            if latest_version and self.compare_versions(APP_VERSION, latest_version):
+                self.latest_version = latest_version
+                self.update_available = True
+
+                # Update UI on main thread
+                update_text = f"Update available: v{latest_version} (click to view)"
+                self.root.after(0, lambda: self.update_status_var.set(update_text))
+                self.root.after(0, lambda: self.update_status_label.config(foreground='blue', cursor='hand2'))
+
+                self.log_message(f"Update available: v{latest_version}")
+            else:
+                # Up to date
+                self.root.after(0, lambda: self.update_status_var.set("Application is up to date"))
+                self.root.after(0, lambda: self.update_status_label.config(foreground='green'))
+
+                # Hide status after a few seconds
+                self.root.after(3000, lambda: self.update_status_var.set(""))
                     
         except Exception as e:
             # Update check failed - don't show error to user, just log it
