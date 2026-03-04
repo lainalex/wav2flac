@@ -39,12 +39,21 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import tkinter.font as tkfont
 
-# Try to use system certificate store (fixes SSL issues on corporate networks)
-try:
-    import truststore
-    truststore.inject_into_ssl()
-except ImportError:
-    pass
+def create_ssl_context():
+    """Create SSL context that includes Windows certificate store (handles corporate proxies)"""
+    ctx = ssl.create_default_context()
+    if hasattr(ssl, 'enum_certificates'):
+        for store in ('CA', 'ROOT'):
+            try:
+                for cert, encoding, _ in ssl.enum_certificates(store):
+                    if encoding == 'x509_asn':
+                        try:
+                            ctx.load_verify_locations(cadata=cert)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+    return ctx
 
 # Try to import packaging for version comparison, use simple fallback if not available
 try:
@@ -1524,7 +1533,7 @@ class WAVtoFLACConverter:
         
         # Use proper SSL context for secure downloads
         try:
-            ssl_context = ssl.create_default_context()
+            ssl_context = create_ssl_context()
             opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
             urllib.request.install_opener(opener)
 
@@ -1693,7 +1702,7 @@ class WAVtoFLACConverter:
         """Background worker to check for application updates"""
         try:
             # Create SSL context for HTTPS requests
-            ssl_context = ssl.create_default_context()
+            ssl_context = create_ssl_context()
 
             # Create request with standard user agent
             request = urllib.request.Request(
