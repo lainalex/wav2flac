@@ -39,6 +39,13 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import tkinter.font as tkfont
 
+# Try to use system certificate store (fixes SSL issues on corporate networks)
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 # Try to import packaging for version comparison, use simple fallback if not available
 try:
     from packaging import version
