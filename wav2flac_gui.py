@@ -1520,12 +1520,12 @@ class WAVtoFLACConverter:
             ssl_context = ssl.create_default_context()
             opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=ssl_context))
             urllib.request.install_opener(opener)
-            
+
             # Add user agent for better compatibility
             request = urllib.request.Request(url, headers={
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             })
-            
+
             # Download with progress tracking
             with urllib.request.urlopen(request, context=ssl_context, timeout=30) as response:
                 total_size = int(response.getheader('Content-Length', 0))
@@ -1687,13 +1687,13 @@ class WAVtoFLACConverter:
         try:
             # Create SSL context for HTTPS requests
             ssl_context = ssl.create_default_context()
-            
+
             # Create request with standard user agent
             request = urllib.request.Request(
                 UPDATE_CHECK_URL,
                 headers={'User-Agent': f'WAV2FLAC-AudioConverter/{APP_VERSION} (Windows; Audio-Tool)'}
             )
-            
+
             # Make request with timeout
             with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
                 if response.status == 200:
